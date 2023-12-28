@@ -5,9 +5,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
-
 
 class DML:
     """
@@ -25,21 +23,25 @@ class DML:
 
     def __init__(
         self,
-        student_cohort,
+        students,
         train_loader,
         val_loader,
-        student_optimizers,
-        loss_fn=nn.MSELoss(),
+        optimizers,
+        schedulers,
+        loss_ce,
+        loss_kd,
         device="cpu",
         log=False,
         logdir="./Experiments",
     ):
-
-        self.student_cohort = student_cohort
+        
+        self.students = students
         self.train_loader = train_loader
         self.val_loader = val_loader
-        self.student_optimizers = student_optimizers
-        self.loss_fn = loss_fn
+        self.optimizers = optimizers
+        self.schedulers = schedulers
+        self.loss_ce = loss_ce
+        self.loss_kd = loss_kd
         self.log = log
         self.logdir = logdir
 
@@ -58,99 +60,92 @@ class DML:
     def train_students(
         self,
         epochs=20,
-        plot_losses=True,
         save_model=True,
         save_model_path="./models/student.pth",
     ):
 
-        for student in self.student_cohort:
+        for student in self.students:
+            student.to(self.device)
             student.train()
 
-        loss_arr = []
-
+        num_students = len(self.students)
+        data_len = len(self.train_loader)
         length_of_dataset = len(self.train_loader.dataset)
         best_acc = 0.0
-        self.best_student_model_weights = deepcopy(self.student_cohort[0].state_dict())
-        self.best_student = self.student_cohort[0]
-        best_student_id = 0
-        num_students = len(self.student_cohort)
+        self.best_student_model_weights = deepcopy(self.students[0].state_dict())
+        self.best_student = self.students[-1]
 
-        print("\nTraining students...")
+        print("\nTraining Teacher and Student...")
 
         for ep in range(epochs):
-            epoch_loss = 0.0
-            correct = 0
+            epoch_loss, epoch_ce_loss, epoch_kd_loss = 0.0, 0.0, 0.0
+            t_correct, s_correct = 0, 0
 
             for (data, label) in self.train_loader:
 
                 data = data.to(self.device)
                 label = label.to(self.device)
 
-                for optim in self.student_optimizers:
+                for optim in self.optimizers:
                     optim.zero_grad()
 
-                avg_student_loss = 0
                 for i in range(num_students):
                     student_loss = 0
                     for j in range(num_students):
                         if i == j:
                             continue
-                        student_loss += self.loss_fn(
-                            self.student_cohort[i](data), self.student_cohort[j](data)
-                        )
+                        loss_kd = self.loss_kd(F.log_softmax(self.students[i](data), dim=1), 
+                                               F.log_softmax(self.students[j](data), dim=1))
+                        student_loss += loss_kd
                     student_loss /= num_students - 1
-                    student_loss += F.cross_entropy(self.student_cohort[i](data), label)
+                    loss_ce = self.loss_ce(self.students[i](data), label)
+                    student_loss += loss_ce
                     student_loss.backward()
-                    self.student_optimizers[i].step()
+                    self.optimizers[i].step()
 
-                    avg_student_loss += student_loss
-
-                avg_student_loss /= num_students
+                epoch_loss += student_loss.item()
+                epoch_ce_loss += loss_ce.item()
+                epoch_kd_loss += loss_kd.item()
 
                 predictions = []
                 correct_preds = []
-                for i, student in enumerate(self.student_cohort):
+                for i, student in enumerate(self.students):
                     predictions.append(student(data).argmax(dim=1, keepdim=True))
-                    correct_preds.append(
-                        predictions[i].eq(label.view_as(predictions[i])).sum().item()
-                    )
+                    correct_preds.append(predictions[i].eq(label.view_as(predictions[i])).sum().item())
 
-                correct += max(correct_preds)
+                t_correct += correct_preds[0]
+                s_correct += correct_preds[-1]
 
-                epoch_loss += avg_student_loss.item()
-
-            epoch_acc = correct / length_of_dataset
-
-            for student_id, student in enumerate(self.student_cohort):
-                _, epoch_val_acc = self._evaluate_model(student)
-
-                if epoch_val_acc > best_acc:
-                    best_acc = epoch_val_acc
-                    self.best_student_model_weights = deepcopy(student.state_dict())
-                    self.best_student = student
-                    best_student_id = student_id
-
-            print(
-                f"The best student model is the model with index {best_student_id} in the cohort"
-            )
+            t_epoch_acc = t_correct / length_of_dataset
+            s_epoch_acc = s_correct / length_of_dataset
+            
+            val_accs = self.evaluate(verbose=False)
+            if val_accs[-1] > best_acc:
+                best_acc = val_accs[-1]
+                self.best_student_model_weights = deepcopy(student.state_dict())
+                self.best_student = student
 
             if self.log:
-                self.writer.add_scalar("Training loss/Student", epoch_loss, epochs)
-                self.writer.add_scalar("Training accuracy/Student", epoch_acc, epochs)
+                self.writer.add_scalar("TrainLoss/Student", epoch_loss/data_len, ep)
+                self.writer.add_scalar("TrainCE/Student", epoch_ce_loss/data_len, ep)
+                self.writer.add_scalar("TrainKD/Student", epoch_kd_loss/data_len, ep)
+                self.writer.add_scalar("TrainAcc/Teacher", t_epoch_acc, ep)
+                self.writer.add_scalar("TrainAcc/Student", s_epoch_acc, ep)
+                self.writer.add_scalar("ValAcc/Teacher", val_accs[0], ep)
+                self.writer.add_scalar("ValAcc/Student", val_accs[-1], ep)
 
-            loss_arr.append(epoch_loss)
-            print(f"Epoch: {ep+1}, Loss: {epoch_loss}, Accuracy: {epoch_acc}")
+            print(f"[{ep+1}]\t LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
+                  f"Loss: {(epoch_loss/data_len):.4f}, CE: {epoch_ce_loss/data_len:.4f}, KD: {epoch_kd_loss/data_len:.4f}\n",
+                  f"\t[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
+            print("-" * 100)
+            for sched in self.schedulers:
+                sched.step()
 
         self.best_student.load_state_dict(self.best_student_model_weights)
         if save_model:
             torch.save(self.best_student.state_dict(), save_model_path)
-            print(
-                f"Saved the model weights of the best performing student! (with index {best_student_id} in the cohort)"
-            )
-        if plot_losses:
-            plt.plot(loss_arr)
 
-    def _evaluate_model(self, model, verbose=True):
+    def _evaluate_model(self, model, verbose=False, name=""):
         """
         Evaluate the given model's accuaracy over val set.
         For internal use only.
@@ -177,29 +172,30 @@ class DML:
                 correct += pred.eq(target.view_as(pred)).sum().item()
 
         if verbose:
-            print(f"Accuracy: {correct/length_of_dataset}")
+            print(f"M{name} Accuracy: {correct/length_of_dataset}")
 
         epoch_val_acc = correct / length_of_dataset
         return outputs, epoch_val_acc
 
-    def evaluate(self):
+    def evaluate(self, verbose=False):
         """
         Evaluate method for printing accuracies of the trained student networks
 
         """
-
-        for i, student in enumerate(self.student_cohort):
-            print("-" * 80)
+        val_accs = []
+        for i, student in enumerate(self.students):
             model = deepcopy(student).to(self.device)
-            print(f"Evaluating student {i}")
-            _, _ = self._evaluate_model(model)
+            _, val_acc_i = self._evaluate_model(model, name=i)
+            val_accs.append(val_acc_i)
+        if verbose:
+            print(f"Teacher Accuracy: {val_accs[0]:.4f}, Student Accuracy: {val_accs[1]:.4f}")
+        return val_accs
 
     def get_parameters(self):
         """
         Get the number of parameters for the teacher and the student network
         """
-
         print("-" * 80)
-        for i, student in enumerate(self.student_cohort):
+        for i, student in enumerate(self.students):
             student_params = sum(p.numel() for p in student.parameters())
             print(f"Total parameters for the student network {i} are: {student_params}")

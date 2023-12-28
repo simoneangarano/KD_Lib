@@ -1,6 +1,4 @@
-import torch.nn as nn
 import torch.nn.functional as F
-
 from KD_Lib.KD.common import BaseClass
 
 
@@ -31,7 +29,10 @@ class VanillaKD(BaseClass):
         val_loader,
         optimizer_teacher,
         optimizer_student,
-        loss_fn=nn.MSELoss(),
+        scheduler_teacher,
+        scheduler_student,
+        loss_ce,
+        loss_kd,
         temp=20.0,
         distil_weight=0.5,
         device="cpu",
@@ -45,13 +46,16 @@ class VanillaKD(BaseClass):
             val_loader,
             optimizer_teacher,
             optimizer_student,
-            loss_fn,
+            scheduler_teacher,
+            scheduler_student,
+            loss_ce,
             temp,
             distil_weight,
             device,
             log,
             logdir,
         )
+        self.loss_kd = loss_kd
 
     def calculate_kd_loss(self, y_pred_student, y_pred_teacher, y_true):
         """
@@ -63,11 +67,9 @@ class VanillaKD(BaseClass):
         """
 
         soft_teacher_out = F.softmax(y_pred_teacher / self.temp, dim=1)
-        soft_student_out = F.softmax(y_pred_student / self.temp, dim=1)
+        log_soft_student_out = F.log_softmax(y_pred_student / self.temp, dim=1)
 
-        loss = (1 - self.distil_weight) * F.cross_entropy(y_pred_student, y_true)
-        loss += (self.distil_weight * self.temp * self.temp) * self.loss_fn(
-            soft_teacher_out, soft_student_out
-        )
-
-        return loss
+        ce_loss = (1 - self.distil_weight) * self.loss_ce(y_pred_student, y_true) # Cross Entropy Loss
+        kd_loss = (self.distil_weight * self.temp * self.temp) * self.loss_kd(log_soft_student_out, soft_teacher_out) # KD Loss
+        loss = ce_loss + kd_loss
+        return loss, ce_loss, kd_loss

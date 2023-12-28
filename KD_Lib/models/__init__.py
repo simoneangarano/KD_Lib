@@ -1,7 +1,7 @@
 from .lenet import LeNet, ModLeNet
 from .lstm import LSTMNet
 from .nin import NetworkInNetwork
-from .resnet import (
+from .resnet_old import (
     ResNet,
     ResNet18,
     ResNet34,

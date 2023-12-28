@@ -1,1 +1,0 @@
-from .weight_threshold_pruning import WeightThresholdPruner

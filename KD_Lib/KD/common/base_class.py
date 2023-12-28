@@ -33,7 +33,9 @@ class BaseClass:
         val_loader,
         optimizer_teacher,
         optimizer_student,
-        loss_fn=nn.KLDivLoss(),
+        scheduler_teacher,
+        scheduler_student,
+        loss_ce,
         temp=20.0,
         distil_weight=0.5,
         device="cpu",
@@ -45,6 +47,8 @@ class BaseClass:
         self.val_loader = val_loader
         self.optimizer_teacher = optimizer_teacher
         self.optimizer_student = optimizer_student
+        self.scheduler_teacher = scheduler_teacher
+        self.scheduler_student = scheduler_student
         self.temp = temp
         self.distil_weight = distil_weight
         self.log = log
@@ -70,8 +74,8 @@ class BaseClass:
             print("Warning!!! Teacher is NONE.")
 
         self.student_model = student_model.to(self.device)
-        self.loss_fn = loss_fn.to(self.device)
-        self.ce_fn = nn.CrossEntropyLoss().to(self.device)
+        self.loss_ce = loss_ce.to(self.device)
+        self.ce_fn = nn.CrossEntropyLoss(reduction='mean').to(self.device)
 
     def train_teacher(
         self,
@@ -90,6 +94,7 @@ class BaseClass:
         """
         self.teacher_model.train()
         loss_arr = []
+        data_len = len(self.train_loader)
         length_of_dataset = len(self.train_loader.dataset)
         best_acc = 0.0
         self.best_teacher_model_weights = deepcopy(self.teacher_model.state_dict())
@@ -133,20 +138,17 @@ class BaseClass:
                 )
 
             if self.log:
-                self.writer.add_scalar("Training loss/Teacher", epoch_loss, epochs)
-                self.writer.add_scalar("Training accuracy/Teacher", epoch_acc, epochs)
-                self.writer.add_scalar(
-                    "Validation accuracy/Teacher", epoch_val_acc, epochs
-                )
+                self.writer.add_scalar("TrainLoss/Teacher", epoch_loss / data_len, ep)
+                self.writer.add_scalar("TrainAcc/Teacher", epoch_acc, ep)
+                self.writer.add_scalar("ValAcc/Teacher", epoch_val_acc, ep)
 
             loss_arr.append(epoch_loss)
-            print(
-                "Epoch: {}, Loss: {}, Accuracy: {}".format(
-                    ep + 1, epoch_loss, epoch_acc
-                )
-            )
+            print(f"[{ep+1}] LR: {self.scheduler_teacher.get_last_lr()[0]:.1e}, Loss: {(epoch_loss/data_len):.4f},", 
+                  f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
+            print("-" * 70)
 
             self.post_epoch_call(ep)
+            self.scheduler_teacher.step()
 
         self.teacher_model.load_state_dict(self.best_teacher_model_weights)
         if save_model:
@@ -172,6 +174,7 @@ class BaseClass:
         self.teacher_model.eval()
         self.student_model.train()
         loss_arr = []
+        data_len = len(self.train_loader)
         length_of_dataset = len(self.train_loader.dataset)
         best_acc = 0.0
         self.best_student_model_weights = deepcopy(self.student_model.state_dict())
@@ -181,20 +184,30 @@ class BaseClass:
             os.makedirs(save_dir)
 
         print("Training Student...")
+        self.teacher_model.eval()
+        self.student_model.train()
 
         for ep in range(epochs):
-            epoch_loss = 0.0
+            epoch_loss, epoch_ce_loss, epoch_kd_loss = 0.0, 0.0, 0.0
             correct = 0
+
+            self.teacher_model.eval()
+            self.student_model.train()
 
             for (data, label) in self.train_loader:
 
                 data = data.to(self.device)
                 label = label.to(self.device)
+                
+                self.optimizer_student.zero_grad()
 
                 student_out = self.student_model(data)
                 teacher_out = self.teacher_model(data)
+                
+                loss, ce_loss, kd_loss = self.calculate_kd_loss(student_out, teacher_out, label)
 
-                loss = self.calculate_kd_loss(student_out, teacher_out, label)
+                loss.backward()
+                self.optimizer_student.step()
 
                 if isinstance(student_out, tuple):
                     student_out = student_out[0]
@@ -202,11 +215,9 @@ class BaseClass:
                 pred = student_out.argmax(dim=1, keepdim=True)
                 correct += pred.eq(label.view_as(pred)).sum().item()
 
-                self.optimizer_student.zero_grad()
-                loss.backward()
-                self.optimizer_student.step()
-
                 epoch_loss += loss.item()
+                epoch_ce_loss += ce_loss.item()
+                epoch_kd_loss += kd_loss.item()
 
             epoch_acc = correct / length_of_dataset
 
@@ -219,18 +230,19 @@ class BaseClass:
                 )
 
             if self.log:
-                self.writer.add_scalar("Training loss/Student", epoch_loss, epochs)
-                self.writer.add_scalar("Training accuracy/Student", epoch_acc, epochs)
-                self.writer.add_scalar(
-                    "Validation accuracy/Student", epoch_val_acc, epochs
-                )
+                self.writer.add_scalar("TrainLoss/Student", epoch_loss / data_len, ep)
+                self.writer.add_scalar("TrainCE/Student", epoch_ce_loss / data_len, ep)
+                self.writer.add_scalar("TrainKD/Student", epoch_kd_loss / data_len, ep)
+                self.writer.add_scalar("TrainAcc/Student", epoch_acc, ep)
+                self.writer.add_scalar("ValAcc/Student", epoch_val_acc, ep)
 
             loss_arr.append(epoch_loss)
             print(
-                "Epoch: {}, Loss: {}, Accuracy: {}".format(
-                    ep + 1, epoch_loss, epoch_acc
-                )
-            )
+                f"[{ep+1}] LR: {self.scheduler_student.get_last_lr()[0]:.1e},",
+                f"Loss: {(epoch_loss/data_len):.4f}, CE: {(epoch_ce_loss/data_len):.4f}, KD: {(epoch_kd_loss/data_len):.4f},", 
+                f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
+            print("-" * 80)
+            self.scheduler_student.step()
 
         self.student_model.load_state_dict(self.best_student_model_weights)
         if save_model:
@@ -293,13 +305,9 @@ class BaseClass:
                 correct += pred.eq(target.view_as(pred)).sum().item()
 
         accuracy = correct / length_of_dataset
-
-        if verbose:
-            print("-" * 80)
-            print("Validation Accuracy: {}".format(accuracy))
         return outputs, accuracy
 
-    def evaluate(self, teacher=False):
+    def evaluate(self, teacher=False, verbose=False):
         """
         Evaluate method for printing accuracies of the trained network
 
@@ -310,7 +318,8 @@ class BaseClass:
         else:
             model = deepcopy(self.student_model).to(self.device)
         _, accuracy = self._evaluate_model(model)
-
+        if verbose:
+            print(f"Accuracy: {accuracy:.4f}")
         return accuracy
 
     def get_parameters(self):
@@ -320,7 +329,7 @@ class BaseClass:
         teacher_params = sum(p.numel() for p in self.teacher_model.parameters())
         student_params = sum(p.numel() for p in self.student_model.parameters())
 
-        print("-" * 80)
+        print("-" * 60)
         print("Total parameters for the teacher network are: {}".format(teacher_params))
         print("Total parameters for the student network are: {}".format(student_params))
 
