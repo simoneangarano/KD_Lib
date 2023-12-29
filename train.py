@@ -3,13 +3,13 @@ import torch
 import torch.optim as optim
 from torchvision import datasets, transforms
 from KD_Lib.KD import VanillaKD, DML
-from torchvision.models import resnet18, resnet50
+# from torchvision.models import resnet18, resnet50
 from KD_Lib.models.resnet import ResNet18, ResNet50
 torch.autograd.set_detect_anomaly(True)
 # os.environ["CUDA_VISIBLE_DEVICES"] = "7"
 
 # Hyperparameters
-MODE: str = 'kd' # 'kd' or 'dml'
+MODE: str = 'dml' # 'kd' or 'dml'
 DATASET: str = 'cifar10' # 'cifar10' or 'cifar100'
 CLASSES: int = 10
 DATA_PATH: str = '../Knowledge-Distillation-Zoo/datasets/'
@@ -60,10 +60,10 @@ if MODE == 'kd':
                           loss_ce=torch.nn.CrossEntropyLoss(reduction='mean'), loss_kd=torch.nn.KLDivLoss(reduction='batchmean'), 
                           temp=T, distil_weight=W, 
                           device="cuda", log=True, logdir=EXP)  
-    if not os.path.exists('./models/teacher.pt'):
+    if not os.path.exists('./models/teacher_kd.pt'):
         distiller.train_teacher(epochs=EPOCHS, plot_losses=True, save_model=True) # Train the teacher network
     else:
-        distiller.teacher_model.load_state_dict(torch.load('./models/teacher.pt'))
+        distiller.teacher_model.load_state_dict(torch.load('./models/teacher_kd.pt'))
         distiller.evaluate(teacher=True, verbose=True)
     distiller.train_student(epochs=EPOCHS, plot_losses=True, save_model=True) # Train the student network
     distiller.evaluate(teacher=False, verbose=True) # Evaluate the student network

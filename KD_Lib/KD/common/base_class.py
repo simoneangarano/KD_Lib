@@ -56,6 +56,10 @@ class BaseClass:
 
         if self.log:
             self.writer = SummaryWriter(logdir)
+            layout = {"Metrics": {"Loss":     ["Multiline", ["Loss Teacher", "Loss Student", "CE Student", "KD Student"]],
+                                  "Accuracy": ["Multiline", ["Accuracy Teacher Train", "Accuracy Student Train", 
+                                                             "Accuracy Student Val", "Accuracy Teacher Val"]]}}
+            self.writer.add_custom_scalars(layout)
 
         if device == "cpu":
             self.device = torch.device("cpu")
@@ -82,7 +86,7 @@ class BaseClass:
         epochs=20,
         plot_losses=True,
         save_model=True,
-        save_model_pth="./models/teacher.pt",
+        save_model_pth="./models/teacher_kd.pt",
     ):
         """
         Function that will be training the teacher
@@ -138,9 +142,9 @@ class BaseClass:
                 )
 
             if self.log:
-                self.writer.add_scalar("TrainLoss/Teacher", epoch_loss / data_len, ep)
-                self.writer.add_scalar("TrainAcc/Teacher", epoch_acc, ep)
-                self.writer.add_scalar("ValAcc/Teacher", epoch_val_acc, ep)
+                self.writer.add_scalar("Loss Teacher", epoch_loss / data_len, ep)
+                self.writer.add_scalar("Accuracy Teacher Train", epoch_acc, ep)
+                self.writer.add_scalar("Accuracy Teacher Val", epoch_val_acc, ep)
 
             loss_arr.append(epoch_loss)
             print(f"[{ep+1}] LR: {self.scheduler_teacher.get_last_lr()[0]:.1e}, Loss: {(epoch_loss/data_len):.4f},", 
@@ -161,7 +165,7 @@ class BaseClass:
         epochs=10,
         plot_losses=True,
         save_model=True,
-        save_model_pth="./models/student.pt",
+        save_model_pth="./models/student_kd.pt",
     ):
         """
         Function to train student model - for internal use only.
@@ -230,11 +234,11 @@ class BaseClass:
                 )
 
             if self.log:
-                self.writer.add_scalar("TrainLoss/Student", epoch_loss / data_len, ep)
-                self.writer.add_scalar("TrainCE/Student", epoch_ce_loss / data_len, ep)
-                self.writer.add_scalar("TrainKD/Student", epoch_kd_loss / data_len, ep)
-                self.writer.add_scalar("TrainAcc/Student", epoch_acc, ep)
-                self.writer.add_scalar("ValAcc/Student", epoch_val_acc, ep)
+                self.writer.add_scalar("Loss Student", epoch_loss / data_len, ep)
+                self.writer.add_scalar("CE Student", epoch_ce_loss / data_len, ep)
+                self.writer.add_scalar("KD Student", epoch_kd_loss / data_len, ep)
+                self.writer.add_scalar("Accuracy Student Train", epoch_acc, ep)
+                self.writer.add_scalar("Accuracy Student Val", epoch_val_acc, ep)
 
             loss_arr.append(epoch_loss)
             print(
@@ -255,7 +259,7 @@ class BaseClass:
         epochs=10,
         plot_losses=True,
         save_model=True,
-        save_model_pth="./models/student.pt",
+        save_model_pth="./models/student_kd.pt",
     ):
         """
         Function that will be training the student

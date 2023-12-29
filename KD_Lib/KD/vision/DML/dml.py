@@ -47,6 +47,10 @@ class DML:
 
         if self.log:
             self.writer = SummaryWriter(logdir)
+            layout = {"Metrics": {"Loss":     ["Multiline", ["Loss Teacher", "Loss Student", "CE Student", "KD Student"]],
+                                  "Accuracy": ["Multiline", ["Accuracy Teacher Train", "Accuracy Student Train", 
+                                                             "Accuracy Student Val", "Accuracy Teacher Val"]]}}
+            self.writer.add_custom_scalars(layout)
 
         try:
             torch.Tensor(0).to(device)
@@ -61,7 +65,7 @@ class DML:
         self,
         epochs=20,
         save_model=True,
-        save_model_path="./models/student.pth",
+        save_model_path="./models/student_dml.pt",
     ):
 
         for student in self.students:
@@ -126,17 +130,17 @@ class DML:
                 self.best_student = student
 
             if self.log:
-                self.writer.add_scalar("TrainLoss/Student", epoch_loss/data_len, ep)
-                self.writer.add_scalar("TrainCE/Student", epoch_ce_loss/data_len, ep)
-                self.writer.add_scalar("TrainKD/Student", epoch_kd_loss/data_len, ep)
-                self.writer.add_scalar("TrainAcc/Teacher", t_epoch_acc, ep)
-                self.writer.add_scalar("TrainAcc/Student", s_epoch_acc, ep)
-                self.writer.add_scalar("ValAcc/Teacher", val_accs[0], ep)
-                self.writer.add_scalar("ValAcc/Student", val_accs[-1], ep)
+                self.writer.add_scalar("Loss Student", epoch_loss/data_len, ep)
+                self.writer.add_scalar("CE Student", epoch_ce_loss/data_len, ep)
+                self.writer.add_scalar("KD Student", epoch_kd_loss/data_len, ep)
+                self.writer.add_scalar("Accuracy Teacher Train", t_epoch_acc, ep)
+                self.writer.add_scalar("Accuracy Student Train", s_epoch_acc, ep)
+                self.writer.add_scalar("Accuracy Teacher Val", val_accs[0], ep)
+                self.writer.add_scalar("Accuracy Student Val", val_accs[-1], ep)
 
-            print(f"[{ep+1}]\t LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
+            print(f"[{ep+1}] LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
                   f"Loss: {(epoch_loss/data_len):.4f}, CE: {epoch_ce_loss/data_len:.4f}, KD: {epoch_kd_loss/data_len:.4f}\n",
-                  f"\t[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
+                  f"[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
             print("-" * 100)
             for sched in self.schedulers:
                 sched.step()
