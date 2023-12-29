@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch.utils.tensorboard import SummaryWriter
-
+from KD_Lib.KD.common.utils import sharpness, sharpness_gap, AverageMeter
 
 class BaseClass:
     """
@@ -58,7 +58,10 @@ class BaseClass:
             self.writer = SummaryWriter(logdir)
             layout = {"Metrics": {"Loss":     ["Multiline", ["Loss Teacher", "Loss Student", "CE Student", "KD Student"]],
                                   "Accuracy": ["Multiline", ["Accuracy Teacher Train", "Accuracy Student Train", 
-                                                             "Accuracy Student Val", "Accuracy Teacher Val"]]}}
+                                                             "Accuracy Student Val", "Accuracy Teacher Val"]],
+                                  "Sharpness": ["Multiline", ["Sharpness Teacher Train", "Sharpness Student Train",
+                                                              "Sharpness Student Val", "Sharpness Teacher Val"]],
+                                  "Sharpness Gap": ["Multiline", ["Sharpness Gap Train", "Sharpness Gap Val"]]}}
             self.writer.add_custom_scalars(layout)
 
         if device == "cpu":
@@ -97,9 +100,8 @@ class BaseClass:
         :param save_model_pth (str): Path where you want to store the teacher model
         """
         self.teacher_model.train()
-        loss_arr = []
-        data_len = len(self.train_loader)
         length_of_dataset = len(self.train_loader.dataset)
+        epoch_loss, train_sharp = AverageMeter(), AverageMeter()
         best_acc = 0.0
         self.best_teacher_model_weights = deepcopy(self.teacher_model.state_dict())
 
@@ -110,55 +112,49 @@ class BaseClass:
         print("Training Teacher... ")
 
         for ep in range(epochs):
-            epoch_loss = 0.0
+            epoch_loss.reset()
             correct = 0
             for (data, label) in self.train_loader:
                 data = data.to(self.device)
                 label = label.to(self.device)
                 out = self.teacher_model(data)
-
                 if isinstance(out, tuple):
                     out = out[0]
+                train_sharp.update(sharpness(out))
 
                 pred = out.argmax(dim=1, keepdim=True)
                 correct += pred.eq(label.view_as(pred)).sum().item()
 
                 loss = self.ce_fn(out, label)
-
                 self.optimizer_teacher.zero_grad()
                 loss.backward()
                 self.optimizer_teacher.step()
 
-                epoch_loss += loss.item()
+                epoch_loss.update(loss.item())
 
             epoch_acc = correct / length_of_dataset
-
-            epoch_val_acc = self.evaluate(teacher=True)
+            epoch_val_acc, val_sharp = self.evaluate(teacher=True)
 
             if epoch_val_acc > best_acc:
                 best_acc = epoch_val_acc
-                self.best_teacher_model_weights = deepcopy(
-                    self.teacher_model.state_dict()
-                )
+                self.best_teacher_model_weights = deepcopy(self.teacher_model.state_dict())
 
             if self.log:
-                self.writer.add_scalar("Loss Teacher", epoch_loss / data_len, ep)
+                self.writer.add_scalar("Loss Teacher", epoch_loss.avg, ep)
                 self.writer.add_scalar("Accuracy Teacher Train", epoch_acc, ep)
                 self.writer.add_scalar("Accuracy Teacher Val", epoch_val_acc, ep)
+                self.writer.add_scalar("Sharpness Teacher Train", train_sharp.avg, ep)
+                self.writer.add_scalar("Sharpness Teacher Val", val_sharp, ep)
 
-            loss_arr.append(epoch_loss)
-            print(f"[{ep+1}] LR: {self.scheduler_teacher.get_last_lr()[0]:.1e}, Loss: {(epoch_loss/data_len):.4f},", 
+            print(f"[{ep+1}] LR: {self.scheduler_teacher.get_last_lr()[0]:.1e}, Loss: {(epoch_loss.avg):.4f},", 
                   f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
             print("-" * 70)
 
-            self.post_epoch_call(ep)
             self.scheduler_teacher.step()
 
         self.teacher_model.load_state_dict(self.best_teacher_model_weights)
         if save_model:
             torch.save(self.teacher_model.state_dict(), save_model_pth)
-        if plot_losses:
-            plt.plot(loss_arr)
 
     def _train_student(
         self,
@@ -177,10 +173,10 @@ class BaseClass:
         """
         self.teacher_model.eval()
         self.student_model.train()
-        loss_arr = []
-        data_len = len(self.train_loader)
         length_of_dataset = len(self.train_loader.dataset)
         best_acc = 0.0
+        epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
+        g_sharp_train, t_sharp_train, s_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
         self.best_student_model_weights = deepcopy(self.student_model.state_dict())
 
         save_dir = os.path.dirname(save_model_pth)
@@ -188,11 +184,8 @@ class BaseClass:
             os.makedirs(save_dir)
 
         print("Training Student...")
-        self.teacher_model.eval()
-        self.student_model.train()
-
         for ep in range(epochs):
-            epoch_loss, epoch_ce_loss, epoch_kd_loss = 0.0, 0.0, 0.0
+            epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset()
             correct = 0
 
             self.teacher_model.eval()
@@ -207,25 +200,29 @@ class BaseClass:
 
                 student_out = self.student_model(data)
                 teacher_out = self.teacher_model(data)
-                
+                if isinstance(student_out, tuple):
+                    student_out = student_out[0]
+
+                g_sharp, t_sharp, s_sharp = sharpness_gap(teacher_out, student_out)
+                g_sharp_train.update(g_sharp)
+                t_sharp_train.update(t_sharp)
+                s_sharp_train.update(s_sharp)
                 loss, ce_loss, kd_loss = self.calculate_kd_loss(student_out, teacher_out, label)
 
                 loss.backward()
                 self.optimizer_student.step()
 
-                if isinstance(student_out, tuple):
-                    student_out = student_out[0]
-
                 pred = student_out.argmax(dim=1, keepdim=True)
                 correct += pred.eq(label.view_as(pred)).sum().item()
 
-                epoch_loss += loss.item()
-                epoch_ce_loss += ce_loss.item()
-                epoch_kd_loss += kd_loss.item()
+                epoch_loss.update(loss.item())
+                epoch_ce_loss.update(ce_loss.item())
+                epoch_kd_loss.update(kd_loss.item())
 
             epoch_acc = correct / length_of_dataset
 
-            _, epoch_val_acc = self._evaluate_model(self.student_model, verbose=True)
+            _, epoch_val_acc, s_sharp_val = self._evaluate_model(self.student_model, verbose=True)
+            _, _, t_sharp_val = self._evaluate_model(self.teacher_model, verbose=True)
 
             if epoch_val_acc > best_acc:
                 best_acc = epoch_val_acc
@@ -234,16 +231,21 @@ class BaseClass:
                 )
 
             if self.log:
-                self.writer.add_scalar("Loss Student", epoch_loss / data_len, ep)
-                self.writer.add_scalar("CE Student", epoch_ce_loss / data_len, ep)
-                self.writer.add_scalar("KD Student", epoch_kd_loss / data_len, ep)
+                self.writer.add_scalar("Loss Student", epoch_loss.avg, ep)
+                self.writer.add_scalar("CE Student", epoch_ce_loss.avg, ep)
+                self.writer.add_scalar("KD Student", epoch_kd_loss.avg, ep)
                 self.writer.add_scalar("Accuracy Student Train", epoch_acc, ep)
                 self.writer.add_scalar("Accuracy Student Val", epoch_val_acc, ep)
+                self.writer.add_scalar("Sharpness Student Train", s_sharp_train.avg, ep)
+                self.writer.add_scalar("Sharpness Student Val", s_sharp_val, ep)
+                self.writer.add_scalar("Sharpness Teacher Train", t_sharp_train.avg, ep)
+                self.writer.add_scalar("Sharpness Gap Train", g_sharp_train.avg, ep)
+                self.writer.add_scalar("Sharpness Teacher Val", t_sharp_val, ep)
+                self.writer.add_scalar("Sharpness Gap Val", t_sharp_val - s_sharp_val, ep)
 
-            loss_arr.append(epoch_loss)
             print(
                 f"[{ep+1}] LR: {self.scheduler_student.get_last_lr()[0]:.1e},",
-                f"Loss: {(epoch_loss/data_len):.4f}, CE: {(epoch_ce_loss/data_len):.4f}, KD: {(epoch_kd_loss/data_len):.4f},", 
+                f"Loss: {(epoch_loss.avg):.4f}, CE: {(epoch_ce_loss.avg):.4f}, KD: {(epoch_kd_loss.avg):.4f},", 
                 f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
             print("-" * 80)
             self.scheduler_student.step()
@@ -251,8 +253,6 @@ class BaseClass:
         self.student_model.load_state_dict(self.best_student_model_weights)
         if save_model:
             torch.save(self.student_model.state_dict(), save_model_pth)
-        if plot_losses:
-            plt.plot(loss_arr)
 
     def train_student(
         self,
@@ -294,6 +294,7 @@ class BaseClass:
         length_of_dataset = len(self.val_loader.dataset)
         correct = 0
         outputs = []
+        sharp = AverageMeter()
 
         with torch.no_grad():
             for data, target in self.val_loader:
@@ -303,13 +304,13 @@ class BaseClass:
 
                 if isinstance(output, tuple):
                     output = output[0]
+                sharp.update(sharpness(output))
                 outputs.append(output)
 
                 pred = output.argmax(dim=1, keepdim=True)
                 correct += pred.eq(target.view_as(pred)).sum().item()
-
         accuracy = correct / length_of_dataset
-        return outputs, accuracy
+        return outputs, accuracy, sharp.avg
 
     def evaluate(self, teacher=False, verbose=False):
         """
@@ -321,10 +322,10 @@ class BaseClass:
             model = deepcopy(self.teacher_model).to(self.device)
         else:
             model = deepcopy(self.student_model).to(self.device)
-        _, accuracy = self._evaluate_model(model)
+        _, accuracy, sharp = self._evaluate_model(model)
         if verbose:
             print(f"Accuracy: {accuracy:.4f}")
-        return accuracy
+        return accuracy, sharp
 
     def get_parameters(self):
         """
