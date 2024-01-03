@@ -111,3 +111,4 @@ Experiments
 cifar_data
 
 .github/*
+models/*

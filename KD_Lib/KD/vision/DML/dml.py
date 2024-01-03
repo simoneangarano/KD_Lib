@@ -1,9 +1,7 @@
-import os
+import time
 from copy import deepcopy
 
-import matplotlib.pyplot as plt
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from KD_Lib.KD.common.utils import AverageMeter, sharpness, sharpness_gap
@@ -31,6 +29,8 @@ class DML:
         schedulers,
         loss_ce,
         loss_kd,
+        temp=1, 
+        distil_weight=0.5, 
         device="cpu",
         log=False,
         logdir="./Experiments",
@@ -43,6 +43,8 @@ class DML:
         self.schedulers = schedulers
         self.loss_ce = loss_ce
         self.loss_kd = loss_kd
+        self.T = temp
+        self.W = distil_weight
         self.log = log
         self.logdir = logdir
 
@@ -86,10 +88,10 @@ class DML:
 
         print("Training Teacher and Student...")
         for ep in range(epochs):
+            t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
             s_sharp_train.reset(), t_sharp_train.reset(), g_sharp_train.reset()
             t_correct, s_correct = 0, 0
-
             for (data, label) in self.train_loader:
 
                 data = data.to(self.device)
@@ -104,26 +106,28 @@ class DML:
                         if i == j:
                             continue
                         out_i = self.students[i](data)
-                        out_j = self.students[j](data)
-                        loss_kd = self.loss_kd(F.log_softmax(out_i, dim=1), 
-                                               F.log_softmax(out_j, dim=1))
+                        with torch.no_grad():
+                            out_j = self.students[j](data)
+                        loss_kd = self.W * self.T * self.T * self.loss_kd(
+                            F.log_softmax(out_i / self.T, dim=1), 
+                            F.log_softmax(out_j.detach() / self.T, dim=1))
                         student_loss += loss_kd
                     student_loss /= num_students - 1
-                    loss_ce = self.loss_ce(self.students[i](data), label)
-                    student_loss += loss_ce
+                    loss_ce = self.loss_ce(out_i, label)
+                    student_loss += (1-self.W) * loss_ce
                     student_loss.backward()
                     self.optimizers[i].step()
 
-                s_sharp, t_sharp, g_sharp = sharpness_gap(out_j, out_i)
+                g_sharp, s_sharp, t_sharp = sharpness_gap(out_j, out_i)
                 s_sharp_train.update(s_sharp), t_sharp_train.update(t_sharp), g_sharp_train.update(g_sharp)
                 epoch_loss.update(student_loss.item()), epoch_ce_loss.update(loss_ce.item()), epoch_kd_loss.update(loss_kd.item())
 
                 predictions = []
                 correct_preds = []
-                for i, student in enumerate(self.students):
-                    predictions.append(student(data).argmax(dim=1, keepdim=True))
-                    correct_preds.append(predictions[i].eq(label.view_as(predictions[i])).sum().item())
-
+                predictions.append(out_j.argmax(dim=1, keepdim=True))
+                correct_preds.append(predictions[0].eq(label.view_as(predictions[0])).sum().item())
+                predictions.append(out_i.argmax(dim=1, keepdim=True))
+                correct_preds.append(predictions[1].eq(label.view_as(predictions[1])).sum().item())
                 t_correct += correct_preds[0]
                 s_correct += correct_preds[-1]
 
@@ -151,9 +155,9 @@ class DML:
                 self.writer.add_scalar("Sharpness Gap Train", g_sharp_train.avg, ep)
                 self.writer.add_scalar("Sharpness Gap Val", g_sharp_val, ep)
 
-            print(f"[{ep+1}] LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
-                  f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}\n",
-                  f"[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
+            print(f"[{ep+1}: {(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
+                  f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}",
+                  f"\n[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
             print("-" * 100)
             for sched in self.schedulers:
                 sched.step()

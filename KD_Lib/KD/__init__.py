@@ -3,6 +3,7 @@ from .vision import (
     BANN,
     CSKD,
     DML,
+    Shake,
     RCO,
     TAKD,
     Attention,

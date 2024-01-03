@@ -92,15 +92,24 @@ class ResNet(nn.Module):
             self.in_planes = planes * block.expansion
         return nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x, return_feats=False):
+        feats = []
         out = F.relu(self.bn1(self.conv1(x)))
+        feats.append(out)
         out = self.layer1(out)
+        feats.append(out)
         out = self.layer2(out)
+        feats.append(out)
         out = self.layer3(out)
+        feats.append(out)
         out = self.layer4(out)
+        feats.append(out)
         out = F.avg_pool2d(out, 4)
         out = out.view(out.size(0), -1)
+        feats.append(out)
         out = self.linear(out)
+        if return_feats:
+            return out, feats, self.linear.weight, self.linear.bias
         return out
 
 

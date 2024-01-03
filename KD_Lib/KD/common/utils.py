@@ -9,7 +9,7 @@ def sharpness(logits, eps=1e-9):
         The sharpness of the logits.
     """
     logits = logits.detach().cpu().numpy()
-    return np.log(np.exp(logits).sum(axis=1) + eps)
+    return np.mean(np.log(np.exp(logits).sum(axis=1) + eps))
 
 def sharpness_gap(teacher_logits, student_logits, eps=1e-9):
     """Computes the sharpness gap between the teacher and student logits.
@@ -22,7 +22,7 @@ def sharpness_gap(teacher_logits, student_logits, eps=1e-9):
     """
     teacher_sharpness = sharpness(teacher_logits, eps)
     student_sharpness = sharpness(student_logits, eps)
-    return np.mean(teacher_sharpness - student_sharpness), np.mean(teacher_sharpness), np.mean(student_sharpness)
+    return teacher_sharpness - student_sharpness, teacher_sharpness, student_sharpness
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
