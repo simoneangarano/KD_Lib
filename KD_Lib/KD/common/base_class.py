@@ -82,12 +82,10 @@ class BaseClass:
 
         self.student_model = student_model.to(self.device)
         self.loss_ce = loss_ce.to(self.device)
-        self.ce_fn = nn.CrossEntropyLoss(reduction='mean').to(self.device)
 
     def train_teacher(
         self,
         epochs=20,
-        plot_losses=True,
         save_model=True,
         save_model_path="./models/teacher_kd.pt",
     ):
@@ -125,7 +123,7 @@ class BaseClass:
                 pred = out.argmax(dim=1, keepdim=True)
                 correct += pred.eq(label.view_as(pred)).sum().item()
 
-                loss = self.ce_fn(out, label)
+                loss = self.loss_ce(out, label)
                 self.optimizer_teacher.zero_grad()
                 loss.backward()
                 self.optimizer_teacher.step()

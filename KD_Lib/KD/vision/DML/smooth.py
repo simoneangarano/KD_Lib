@@ -4,9 +4,9 @@ from copy import deepcopy
 import torch
 import torch.nn.functional as F
 from KD_Lib.KD.common.utils import AverageMeter, sharpness, sharpness_gap
-from KD_Lib.KD.vision.DML.dml import DML
+from KD_Lib.KD.vision.DML.shake import Shake
 
-class Shake(DML):
+class Smooth(Shake):
     def __init__(
         self,
         students,
@@ -18,18 +18,15 @@ class Shake(DML):
         loss_kd,
         temp=1, 
         distil_weight=0.5,
-        layer_norm=True,
+        layer_norm=False,
         device="cpu",
         log=False,
         logdir="./Experiments",
     ):
         super().__init__(students, train_loader, val_loader, optimizers, schedulers, loss_ce, loss_kd, 
-                         temp, distil_weight, device, log, logdir)
-        self.C = 100 # Number of classes
-        self.layer_norm = layer_norm
-        if self.layer_norm:
-            self.ln = torch.nn.LayerNorm((self.C,), elementwise_affine=False, eps=1e-7).to(self.device)
-
+                         temp, distil_weight, layer_norm, device, log, logdir)
+        
+    
     def train_students(
         self,
         epochs=20,
@@ -67,10 +64,10 @@ class Shake(DML):
 
                 logit_s = self.students[-1](data)
                 with torch.no_grad():
-                    logit_t, feat_t, weight, bias = self.students[0](data, return_feats=True)
+                    logit_t, feat_t, _, _ = self.students[0](data, return_feats=True)
                     feat_t = [f.detach() for f in feat_t]
 
-                pred_feat_s = self.students[1](feat_t[2:-1], weight.detach(), bias.detach()) # Feature selection
+                pred_feat_s = self.students[1](feat_t[-1]) # Feature selection
                 logit_s = self.norm(logit_s)
                 logit_t = self.norm(logit_t)
                 pred_feat_s = self.norm(pred_feat_s)
@@ -159,9 +156,9 @@ class Shake(DML):
                     if len(model) == 1:
                         output = model[0](data)
                     else:
-                        _, feat_t, weight, bias = model[0](data, return_feats=True)
+                        _, feat_t, _, _ = model[0](data, return_feats=True)
                         feat_t = [f.detach() for f in feat_t]
-                        output = model[1](feat_t[2:-1], weight.detach(), bias.detach()) # Feature selection
+                        output = model[1](feat_t[-1]) # Feature selection
                     output = self.norm(output)
                     outputs.append(output)
                     sharp.update(sharpness(output))
@@ -175,99 +172,3 @@ class Shake(DML):
             epoch_val_acc = correct / length_of_dataset
             return outputs, epoch_val_acc, sharp.avg
 
-
-    def evaluate(self, verbose=False, teacher=False):
-        """
-        Evaluate method for printing accuracies of the trained student networks
-
-        """        
-        models = [deepcopy(m).to(self.device) for m in self.students]
-        if teacher:
-            _, val_acc_t, sharp_t = self._evaluate_model(models[:1], name="Teacher")
-            return val_acc_t, sharp_t
-        _, val_acc_t, sharp_t = self._evaluate_model(models[:-1], name="Teacher")
-        _, val_acc_s, sharp_s = self._evaluate_model(models[-1:], name="Student")
-        val_accs = [val_acc_t, val_acc_s]
-        val_sharps = [sharp_t, sharp_s]
-        if verbose:
-            print(f"Teacher Accuracy: {val_accs[0]:.4f}, Student Accuracy: {val_accs[1]:.4f}")
-        return val_accs, val_sharps[0], val_sharps[-1], val_sharps[0] - val_sharps[-1]
-    
-    def train_teacher(
-        self,
-        optimizer,
-        scheduler,
-        epochs=20,
-        save_model=True,
-        save_model_path="./models/teacher_kd.pt",
-    ):
-        """
-        Function that will be training the teacher
-
-        :param epochs (int): Number of epochs you want to train the teacher
-        :param plot_losses (bool): True if you want to plot the losses
-        :param save_model (bool): True if you want to save the teacher model
-        :param save_model_path (str): Path where you want to store the teacher model
-        """
-        self.students[0].train()
-        length_of_dataset = len(self.train_loader.dataset)
-        epoch_loss, train_sharp = AverageMeter(), AverageMeter()
-        best_acc = 0.0
-        self.best_teacher_model_weights = deepcopy(self.students[0].state_dict())
-
-        save_dir = os.path.dirname(save_model_path)
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-
-        print("Training Teacher... ")
-
-        for ep in range(epochs):
-            t0 = time.time()
-            self.students[0].train()
-            epoch_loss.reset()
-            correct = 0
-            for (data, label) in self.train_loader:
-                data = data.to(self.device)
-                label = label.to(self.device)
-                out = self.students[0](data)
-                out = self.norm(out)
-                train_sharp.update(sharpness(out))
-
-                pred = out.argmax(dim=1, keepdim=True)
-                correct += pred.eq(label.view_as(pred)).sum().item()
-
-                loss = self.loss_ce(out, label)
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-                epoch_loss.update(loss.item())
-
-            epoch_acc = correct / length_of_dataset
-            epoch_val_acc, val_sharp = self.evaluate(teacher=True)
-
-            if epoch_val_acc > best_acc:
-                best_acc = epoch_val_acc
-                self.best_teacher_model_weights = deepcopy(self.students[0].state_dict())
-
-            if self.log:
-                self.writer.add_scalar("Loss Teacher", epoch_loss.avg, ep)
-                self.writer.add_scalar("Accuracy Teacher Train", epoch_acc, ep)
-                self.writer.add_scalar("Accuracy Teacher Val", epoch_val_acc, ep)
-                self.writer.add_scalar("Sharpness Teacher Train", train_sharp.avg, ep)
-                self.writer.add_scalar("Sharpness Teacher Val", val_sharp, ep)
-
-            print(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {scheduler.get_last_lr()[0]:.1e}, Loss: {(epoch_loss.avg):.4f},", 
-                  f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
-            print("-" * 70)
-
-            scheduler.step()
-
-        self.students[0].load_state_dict(self.best_teacher_model_weights)
-        if save_model:
-            torch.save(self.students[0].state_dict(), save_model_path)
-
-    def norm(self, x):
-        if self.layer_norm:
-            return self.ln(x) *  3.1415
-        return x

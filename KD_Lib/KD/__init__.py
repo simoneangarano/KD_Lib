@@ -4,6 +4,7 @@ from .vision import (
     CSKD,
     DML,
     Shake,
+    Smooth,
     RCO,
     TAKD,
     Attention,

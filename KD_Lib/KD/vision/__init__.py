@@ -1,7 +1,7 @@
 from .attention import Attention
 from .BANN import BANN
 from .CSKD import CSKD
-from .DML import DML, Shake
+from .DML import DML, Shake, Smooth
 from .KA import LabelSmoothReg, ProbShift
 from .mean_teacher import MeanTeacher
 from .noisy import MessyCollab, NoisyTeacher, SoftRandom
