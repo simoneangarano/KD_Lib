@@ -1,6 +1,6 @@
 import numpy as np
 
-def sharpness(logits, eps=1e-9):
+def sharpness(logits, eps=1e-9, clip=70):
     """Computes the sharpness of the logits.
     Args:
         logits: Tensor of shape [batch_size, num_classes] containing the logits.
@@ -9,7 +9,7 @@ def sharpness(logits, eps=1e-9):
         The sharpness of the logits.
     """
     logits = logits.detach().cpu().numpy()
-    return np.mean(np.log(np.exp(logits).sum(axis=1) + eps))
+    return np.mean(np.log(np.exp(np.clip(logits,-clip,clip)).sum(axis=1) + eps))
 
 def sharpness_gap(teacher_logits, student_logits, eps=1e-9):
     """Computes the sharpness gap between the teacher and student logits.

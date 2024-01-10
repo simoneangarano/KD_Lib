@@ -9,47 +9,28 @@ from KD_Lib.KD.common.utils import AverageMeter, sharpness, sharpness_gap
 class DML:
     """
     Implementation of "Deep Mutual Learning" https://arxiv.org/abs/1706.00384
-
-    :param student_cohort (list/tuple): Collection of student models
-    :param train_loader (torch.utils.data.DataLoader): Dataloader for training
-    :param val_loader (torch.utils.data.DataLoader): Dataloader for validation/testing
-    :param student_optimizers (list/tuple): Collection of Pytorch optimizers for training students
-    :param loss_fn (torch.nn.Module): Loss Function used for distillation
-    :param device (str): Device used for training; 'cpu' for cpu and 'cuda' for gpu
-    :param log (bool): True if logging required
-    :param logdir (str): Directory for storing logs
     """
 
     def __init__(
         self,
-        students,
-        train_loader,
-        val_loader,
+        models,
+        loaders,
         optimizers,
         schedulers,
-        loss_ce,
-        loss_kd,
-        temp=1, 
-        distil_weight=0.5, 
-        device="cpu",
-        log=False,
-        logdir="./Experiments",
+        losses,
+        cfg
     ):
         
-        self.students = students
-        self.train_loader = train_loader
-        self.val_loader = val_loader
+        self.models = models
+        self.train_loader, self.val_loader = loaders
         self.optimizers = optimizers
         self.schedulers = schedulers
-        self.loss_ce = loss_ce
-        self.loss_kd = loss_kd
-        self.T = temp
-        self.W = distil_weight
-        self.log = log
-        self.logdir = logdir
+        self.loss_ce, self.loss_kd = losses
+        self.cfg = cfg
+        self.device = torch.device(self.cfg.DEVICE)
 
-        if self.log:
-            self.writer = SummaryWriter(logdir)
+        if self.cfg.LOG:
+            self.writer = SummaryWriter(self.cfg.LOG_DIR)
             layout = {"Metrics": {"Loss": ["Multiline", ["Loss Teacher", "Loss Student", "CE Student", "KD Student"]],
                                   "Accuracy": ["Multiline", ["Accuracy Teacher Train", "Accuracy Student Train", 
                                                              "Accuracy Student Val", "Accuracy Teacher Val"]],
@@ -58,36 +39,22 @@ class DML:
                                   "Sharpness Gap": ["Multiline", ["Sharpness Gap Train", "Sharpness Gap Val"]]}}
             self.writer.add_custom_scalars(layout)
 
-        try:
-            torch.Tensor(0).to(device)
-            self.device = device
-        except:
-            print(
-                "Either an invalid device or CUDA is not available. Defaulting to CPU."
-            )
-            self.device = "cpu"
+    def train_students(self, save_model=True):
 
-    def train_students(
-        self,
-        epochs=20,
-        save_model=True,
-        save_model_path="./models/student_dml.pt",
-    ):
+        for model in self.models:
+            model.to(self.device)
+            model.train()
 
-        for student in self.students:
-            student.to(self.device)
-            student.train()
-
-        num_students = len(self.students)
+        num_students = len(self.models)
         length_of_dataset = len(self.train_loader.dataset)
         best_acc = 0.0
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
         s_sharp_train, t_sharp_train, g_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
-        self.best_student_model_weights = deepcopy(self.students[0].state_dict())
-        self.best_student = self.students[-1]
+        self.best_student_model_weights = deepcopy(self.models[0].state_dict())
+        self.best_student = self.models[-1]
 
         print("Training Teacher and Student...")
-        for ep in range(epochs):
+        for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
             s_sharp_train.reset(), t_sharp_train.reset(), g_sharp_train.reset()
@@ -105,16 +72,16 @@ class DML:
                     for j in range(num_students):
                         if i == j:
                             continue
-                        out_i = self.students[i](data)
+                        out_i = self.models[i](data, norm_feats=self.cfg.FEAT_NORM)
                         with torch.no_grad():
-                            out_j = self.students[j](data)
-                        loss_kd = self.W * self.T * self.T * self.loss_kd(
-                            F.log_softmax(out_i / self.T, dim=1), 
-                            F.log_softmax(out_j.detach() / self.T, dim=1))
+                            out_j = self.models[j](data, norm_feats=self.cfg.FEAT_NORM)
+                        loss_kd = self.cfg.W * self.cfg.T * self.cfg.T * self.loss_kd(
+                            F.log_softmax(out_i / self.cfg.T, dim=1), 
+                            F.log_softmax(out_j.detach() / self.cfg.T, dim=1))
                         student_loss += loss_kd
                     student_loss /= num_students - 1
                     loss_ce = self.loss_ce(out_i, label)
-                    student_loss += (1-self.W) * loss_ce
+                    student_loss += loss_ce
                     student_loss.backward()
                     self.optimizers[i].step()
 
@@ -137,10 +104,10 @@ class DML:
             val_accs, t_sharp_val, s_sharp_val, g_sharp_val = self.evaluate(verbose=False)
             if val_accs[-1] > best_acc:
                 best_acc = val_accs[-1]
-                self.best_student_model_weights = deepcopy(student.state_dict())
-                self.best_student = student
+                self.best_student_model_weights = deepcopy(self.models[-1].state_dict())
+                self.best_student = self.models[-1]
 
-            if self.log:
+            if self.cfg.LOG:
                 self.writer.add_scalar("Loss Student", epoch_loss.avg, ep)
                 self.writer.add_scalar("CE Student", epoch_ce_loss.avg, ep)
                 self.writer.add_scalar("KD Student", epoch_kd_loss.avg, ep)
@@ -164,15 +131,12 @@ class DML:
 
         self.best_student.load_state_dict(self.best_student_model_weights)
         if save_model:
-            torch.save(self.best_student.state_dict(), save_model_path)
+            torch.save(self.best_student.state_dict(), self.cfg.SAVE_PATH)
 
-    def _evaluate_model(self, model, verbose=False, name=""):
+    def _evaluate_model(self, model):
         """
         Evaluate the given model's accuaracy over val set.
         For internal use only.
-
-        :param model (nn.Module): Model to be used for evaluation
-        :param verbose (bool): Display Accuracy
         """
         model.eval()
         length_of_dataset = len(self.val_loader.dataset)
@@ -186,16 +150,11 @@ class DML:
                 target = target.to(self.device)
                 output = model(data)
 
-                if isinstance(output, tuple):
-                    output = output[0]
                 outputs.append(output)
                 sharp.update(sharpness(output))
 
                 pred = output.argmax(dim=1, keepdim=True)
                 correct += pred.eq(target.view_as(pred)).sum().item()
-
-        if verbose:
-            print(f"M{name} Accuracy: {correct/length_of_dataset}")
 
         epoch_val_acc = correct / length_of_dataset
         return outputs, epoch_val_acc, sharp.avg
@@ -203,23 +162,13 @@ class DML:
     def evaluate(self, verbose=False):
         """
         Evaluate method for printing accuracies of the trained student networks
-
         """
         val_accs, val_sharps = [], []
-        for i, student in enumerate(self.students):
-            model = deepcopy(student).to(self.device)
-            _, val_acc_i, sharp = self._evaluate_model(model, name=i)
+        for i, model in enumerate(self.models):
+            model = deepcopy(model).to(self.device)
+            _, val_acc_i, sharp = self._evaluate_model(model)
             val_accs.append(val_acc_i)
             val_sharps.append(sharp)
         if verbose:
             print(f"Teacher Accuracy: {val_accs[0]:.4f}, Student Accuracy: {val_accs[1]:.4f}")
         return val_accs, val_sharps[0], val_sharps[-1], val_sharps[0] - val_sharps[-1]
-
-    def get_parameters(self):
-        """
-        Get the number of parameters for the teacher and the student network
-        """
-        print("-" * 80)
-        for i, student in enumerate(self.students):
-            student_params = sum(p.numel() for p in student.parameters())
-            print(f"Total parameters for the student network {i} are: {student_params}")

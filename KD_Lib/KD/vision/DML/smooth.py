@@ -9,47 +9,32 @@ from KD_Lib.KD.vision.DML.shake import Shake
 class Smooth(Shake):
     def __init__(
         self,
-        students,
-        train_loader,
-        val_loader,
+        models,
+        loaders,
         optimizers,
         schedulers,
-        loss_ce,
-        loss_kd,
-        temp=1, 
-        distil_weight=0.5,
-        layer_norm=False,
-        device="cpu",
-        log=False,
-        logdir="./Experiments",
+        losses,
+        cfg
     ):
-        super().__init__(students, train_loader, val_loader, optimizers, schedulers, loss_ce, loss_kd, 
-                         temp, distil_weight, layer_norm, device, log, logdir)
-        
+        super().__init__(models, loaders, optimizers, schedulers, losses, cfg)        
     
-    def train_students(
-        self,
-        epochs=20,
-        save_model=True,
-        save_model_path="./models/student_dml.pt",
-    ):
-
-        self.students[-1].to(self.device)
-        self.students[-1].train()
-        self.students[0].to(self.device)
-        self.students[0].eval()
-        self.students[1].to(self.device)
-        self.students[1].train() # ShakeHead
+    def train_students(self, save_model=True):
+        self.models[-1].to(self.device)
+        self.models[-1].train()
+        self.models[0].to(self.device)
+        self.models[0].eval()
+        self.models[1].to(self.device)
+        self.models[1].train() # SmoothHead
 
         length_of_dataset = len(self.train_loader.dataset)
         best_acc = 0.0
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
         s_sharp_train, t_sharp_train, g_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
-        self.best_student_model_weights = deepcopy(self.students[0].state_dict())
-        self.best_student = self.students[-1]
+        self.best_student_model_weights = deepcopy(self.models[0].state_dict())
+        self.best_student = self.models[-1]
 
         print("Training Teacher and Student...")
-        for ep in range(epochs):
+        for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
             s_sharp_train.reset(), t_sharp_train.reset(), g_sharp_train.reset()
@@ -62,28 +47,31 @@ class Smooth(Shake):
                 for optim in self.optimizers:
                     optim.zero_grad()
 
-                logit_s = self.students[-1](data)
+                logit_s = self.models[-1](data, norm_feats=self.cfg.FEAT_NORM)
                 with torch.no_grad():
-                    logit_t, feat_t, _, _ = self.students[0](data, return_feats=True)
+                    logit_t, feat_t, _, _ = self.models[0](data, return_feats=True, norm_feats=self.cfg.FEAT_NORM)
                     feat_t = [f.detach() for f in feat_t]
 
-                pred_feat_s = self.students[1](feat_t[-1]) # Feature selection
+                pred_feat_s = self.models[1](feat_t[-1]) # Feature selection
                 logit_s = self.norm(logit_s)
                 logit_t = self.norm(logit_t)
                 pred_feat_s = self.norm(pred_feat_s)
-                # cls + kl div
+                # classification loss student
                 loss_cls = self.loss_ce(logit_s, label)
-                # loss_div = self.loss_kd(logit_s, logit_t)
-                A = self.T * self.T * self.loss_kd(F.log_softmax(pred_feat_s/self.T, dim=1), 
-                                                   F.log_softmax(logit_s.detach()/self.T, dim=1))
-                B = self.T * self.T * self.loss_kd(F.log_softmax(logit_s/self.T, dim=1), 
-                                                   F.log_softmax(pred_feat_s.detach()/self.T, dim=1))
-                loss_kd = A + B
+                # distillation loss student <-> smooth head
+                A = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(pred_feat_s/self.cfg.T, dim=1), 
+                                                           F.log_softmax(logit_s.detach()/self.cfg.T, dim=1))
+                B = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
+                                                           F.log_softmax(pred_feat_s.detach()/self.cfg.T, dim=1))
+                # classification loss smooth head
                 C = self.loss_ce(pred_feat_s, label)
+                # distillation loss smooth head <-> teacher
                 D = F.mse_loss(pred_feat_s, logit_t.detach())
-                loss_kd += C + D
-                # print(f"A {A:.4f}, B {B:.4f}, C {C:.4f}, D {D:.4f}")
-                loss = (1-self.W) * loss_cls + self.W * loss_kd
+                # distillation loss student <-> teacher
+                # E = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
+                #                                            F.log_softmax(logit_t.detach()/self.cfg.T, dim=1))
+                loss_kd = A + B + C + D # + E
+                loss = loss_cls + self.cfg.W * loss_kd
                 loss.backward()
                 self.optimizers[-1].step()
 
@@ -106,10 +94,10 @@ class Smooth(Shake):
             val_accs, t_sharp_val, s_sharp_val, g_sharp_val = self.evaluate(verbose=False)
             if val_accs[-1] > best_acc:
                 best_acc = val_accs[-1]
-                self.best_student_model_weights = deepcopy(self.students[1].state_dict())
-                self.best_student = self.students[1]
+                self.best_student_model_weights = deepcopy(self.models[1].state_dict())
+                self.best_student = self.models[1]
 
-            if self.log:
+            if self.cfg.LOG:
                 self.writer.add_scalar("Loss Student", epoch_loss.avg, ep)
                 self.writer.add_scalar("CE Student", epoch_ce_loss.avg, ep)
                 self.writer.add_scalar("KD Student", epoch_kd_loss.avg, ep)
@@ -128,20 +116,16 @@ class Smooth(Shake):
                   f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}",
                   f"\n[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
             print("-" * 100)
-            for sched in self.schedulers:
-                sched.step()
+            self.schedulers[-1].step()
 
         self.best_student.load_state_dict(self.best_student_model_weights)
         if save_model:
-            torch.save(self.best_student.state_dict(), save_model_path)
+            torch.save(self.best_student.state_dict(), self.cfg.SAVE_PATH)
 
-    def _evaluate_model(self, model, verbose=False, name=""):
+    def _evaluate_model(self, model):
             """
             Evaluate the given model's accuaracy over val set.
             For internal use only.
-
-            :param model (nn.Module): Model to be used for evaluation
-            :param verbose (bool): Display Accuracy
             """
             model = [m.eval() for m in model]
             length_of_dataset = len(self.val_loader.dataset)
@@ -165,9 +149,6 @@ class Smooth(Shake):
 
                     pred = output.argmax(dim=1, keepdim=True)
                     correct += pred.eq(target.view_as(pred)).sum().item()
-
-            if verbose:
-                print(f"M{name} Accuracy: {correct/length_of_dataset}")
 
             epoch_val_acc = correct / length_of_dataset
             return outputs, epoch_val_acc, sharp.avg

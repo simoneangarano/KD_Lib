@@ -1,9 +1,126 @@
+from __future__ import print_function
+
+import os
+import socket
+import numpy as np
+from torch.utils.data import DataLoader
+from torchvision import datasets, transforms
+from PIL import Image
+
 import os
 import pandas as pd
+import torch
+from torchvision import datasets
 from torchvision.datasets.folder import default_loader
 from torchvision.datasets.utils import download_url
 from torchvision import transforms
 from torch.utils.data import Dataset
+
+def get_dataset(cfg):
+    # Dataset
+    if cfg.DATASET == 'cifar10':
+        dataset = datasets.CIFAR10
+        cfg.CLASSES = 10
+        mean = (0.4914, 0.4822, 0.4465)
+        std  = (0.2023, 0.1994, 0.2010)
+        imsize = 32
+        train_transform = None
+    elif cfg.DATASET == 'cifar100':
+        dataset = datasets.CIFAR100
+        cfg.CLASSES = 100
+        mean = (0.5071, 0.4867, 0.4408)
+        std  = (0.2675, 0.2565, 0.2761)
+        imsize = 32
+        train_transform = None
+    elif cfg.DATASET == 'cub200':
+        dataset = Cub200
+        cfg.CLASSES = 200
+        mean = (104/255.0, 117/255.0, 128/255.0)
+        std = (1/255.0, 1/255.0, 1/255.0)
+        imsize = 227
+        ratio=0.16
+        train_transform = transforms.Compose([
+            transforms.RandomResizedCrop(scale=(ratio, 1), size=imsize),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std)
+        ])
+        test_transform = transforms.Compose([
+            transforms.CenterCrop(imsize),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std)
+        ])
+
+    if train_transform is None:
+        train_transform = transforms.Compose([
+            transforms.RandomCrop(imsize, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std)])
+        test_transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std)])
+        
+    trainset = dataset(root=cfg.DATA_PATH, train=True, download=False, transform=train_transform)
+    train_loader = torch.utils.data.DataLoader(trainset, batch_size=cfg.BATCH_SIZE, shuffle=True, num_workers=cfg.WORKERS, pin_memory=False)
+    testset = dataset(root=cfg.DATA_PATH, train=False, download=False, transform=test_transform)
+    test_loader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=cfg.WORKERS, pin_memory=False)
+    return [train_loader, test_loader]
+
+
+class CIFAR100Instance(datasets.CIFAR100):
+    """CIFAR100Instance Dataset.
+    """
+    def __getitem__(self, index):
+        img, target = super().__getitem__(index)
+        return img, target, index
+
+def get_cifar100_dataloaders(data_folder, batch_size=128, num_workers=8, is_instance=False):
+    """
+    cifar 100
+    """
+    train_transform = transforms.Compose([
+        transforms.RandomCrop(32, padding=4),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+    ])
+    test_transform = transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize((0.5071, 0.4867, 0.4408), (0.2675, 0.2565, 0.2761)),
+    ])
+
+    if is_instance:
+        train_set = CIFAR100Instance(root=data_folder,
+                                     download=False,
+                                     train=True,
+                                     transform=train_transform)
+        n_data = len(train_set)
+    else:
+        train_set = datasets.CIFAR100(root=data_folder,
+                                      download=False,
+                                      train=True,
+                                      transform=train_transform)
+    train_loader = DataLoader(train_set,
+                              batch_size=batch_size,
+                              shuffle=True,
+                              num_workers=num_workers,
+                              pin_memory=True)
+
+    test_set = datasets.CIFAR100(root=data_folder,
+                                 download=False,
+                                 train=False,
+                                 transform=test_transform)
+    test_loader = DataLoader(test_set,
+                             batch_size=int(batch_size/2),
+                             shuffle=False,
+                             num_workers=int(num_workers/2),
+                             pin_memory=True)
+
+    if is_instance:
+        return train_loader, test_loader, n_data
+    else:
+        return train_loader, test_loader
 
 
 class Cub200(Dataset):

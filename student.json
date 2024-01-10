@@ -1,1 +1,0 @@
-{"MODE": "shake", "DATASET": "cifar100", "CLASSES": 100, "DATA_PATH": "../Knowledge-Distillation-Zoo/datasets/", "BATCH_SIZE": 128, "TEACHER": 

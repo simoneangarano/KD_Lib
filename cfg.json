@@ -1,1 +1,0 @@
-{"MODE": "shake", "DATASET": "cifar100", "CLASSES": 10, "DATA_PATH": "../Knowledge-Distillation-Zoo/datasets/", "BATCH_SIZE": 128, "TEACHER": "resnet152", "STUDENT": "resnet18", "LR": 0.1, "LR_MIN": 1e-06, "T": 1.0, "W": 0.5, "EPOCHS": 200, "SCHEDULER": "cos", "TEACHER_WEIGHTS": "./models/teacher_cifar100_shake.pt", "PARALLEL": false, "EXP": "shake_cifar100"}
