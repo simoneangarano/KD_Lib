@@ -126,7 +126,7 @@ mnist_data
 Experiments
 cifar_data
 
-.github/*
-models/*
+.github/
+models/
 tb/
 ```

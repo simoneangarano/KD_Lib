@@ -5,8 +5,8 @@ from KD_Lib.models import model_dict
 from KD_Lib.models.resnet_torch import get_ResNet, monkey_patch
 from KD_Lib.models.shake import ShakeHead
 from KD_Lib.KD import VanillaKD, DML, Shake, Smooth
-from datasets import get_dataset, get_cifar100_dataloaders
-from utils import get_optim_sched
+from KD_Lib.datasets import get_dataset, get_cifar100_dataloaders
+from KD_Lib.utils import get_optim_sched
 # os.environ["CUDA_VISIBLE_DEVICES"] = '5'
 
 # Hyperparameters
