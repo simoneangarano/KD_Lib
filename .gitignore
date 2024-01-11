@@ -112,3 +112,7 @@ cifar_data
 
 .github/*
 models/*
+tb/
+```
+I have tried to add the following to my .gitignore file:
+```

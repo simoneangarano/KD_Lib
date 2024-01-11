@@ -1,0 +1,6 @@
+{"MODE": "smooth", "DATASET": "cifar100", "IMSIZE": 32, "CLASSES": 100, "DATA_PATH": "../Knowledge-Distillation-Zoo/datasets/",
+ "BATCH_SIZE": 64, "WORKERS": 8, "TEACHER": "resnet110", "STUDENT": "resnet20", "CUSTOM_MODEL": true, "LAYER_NORM": false, "LR": 0.05, 
+ "LR_MIN": 5e-05, "MOMENTUM": 0.9, "WD": 0.0005, "T": 4.0, "W": 1.0, "FEAT_NORM": false, "EPOCHS": 240, "SCHEDULER": "step", 
+ "STEPS": [150, 180, 210], "GAMMA": 0.1, "TEACHER_WEIGHTS": "./models/teacher_cifar100_kd.pt", "PARALLEL": false, 
+ "EXP": "smooth_cifar100", "LOG": true, "LOG_DIR": "./tb/smooth_cifar100/", "SAVE_PATH": "./models/smooth_cifar100.pt", 
+ "DEVICE": "cuda", "VACC": {"T_LAST": 0.7437, "T_BEST": 0.7434, "S_LAST": 0.7077, "S_BEST": 0.7077}}
