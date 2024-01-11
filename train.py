@@ -17,7 +17,7 @@ class Cfg:
                 setattr(self, key, dict[key])
             return
         
-        self.MODE: str = 'kd' # 'kd' or 'dml' or 'shake' or 'smooth' or 'baseline'
+        self.MODE: str = 'smooth' # 'kd' or 'dml' or 'shake' or 'smooth' or 'baseline'
         self.DATASET: str = 'cifar100' # 'cifar10' or 'cifar100'
         self.IMSIZE: int = 32 if 'cifar' in self.DATASET else 227
         self.CLASSES: int = 0
@@ -33,15 +33,15 @@ class Cfg:
         self.MOMENTUM: float = 0.9
         self.WD: float = 5e-4
         self.T: float = 4.0
-        self.W: float = 0.9
-        self.FEAT_NORM: bool = True
+        self.W: float = 1.0
+        self.FEAT_NORM: bool = False
         self.EPOCHS: int = 240
         self.SCHEDULER: str = 'step' # 'cos' or 'step' or 'lin'
         self.STEPS: list = [150, 180, 210]
         self.GAMMA: float = 0.1
         self.TEACHER_WEIGHTS: str = f'./models/teacher_{self.DATASET}_kd.pt'
         self.PARALLEL: bool = False
-        self.EXP: str = f"{self.MODE}_{self.DATASET}_fn"
+        self.EXP: str = f"{self.MODE}_{self.DATASET}_no_mse"
         self.LOG: bool = True
         self.LOG_DIR: str = f"./tb/{self.EXP}/"
         self.SAVE_PATH: str = f"./models/{self.EXP}.pt"

@@ -1,6 +1,5 @@
+import numpy as np
 import torch
-from torch import optim
-from torch.optim.lr_scheduler import CosineAnnealingLR, MultiStepLR, LinearLR
 
 def get_optim_sched(models: list, cfg, single=False):
     os = {'optims': [], 'scheds': []}
@@ -20,7 +19,7 @@ def get_optim_sched(models: list, cfg, single=False):
     return os
 
 def get_single_opt_sched(params, cfg):
-    opt = optim.SGD(params, lr=cfg.LR, momentum=cfg.MOMENTUM, weight_decay=cfg.WD)
+    opt = torch.optim.SGD(params, lr=cfg.LR, momentum=cfg.MOMENTUM, weight_decay=cfg.WD)
     if cfg.SCHEDULER == 'cos':
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=cfg.EPOCHS, eta_min=cfg.LR_MIN)
     elif cfg.SCHEDULER == 'step':
@@ -28,3 +27,44 @@ def get_single_opt_sched(params, cfg):
     elif cfg.SCHEDULER == 'lin':
         sched = torch.optim.lr_scheduler.LinearLR(opt, total_iters=cfg.EPOCHS, start_factor=1, end_factor=cfg.LR_MIN/cfg.LR)
     return opt, sched
+
+def sharpness(logits, eps=1e-9, clip=70):
+    """Computes the sharpness of the logits.
+    Args:
+        logits: Tensor of shape [batch_size, num_classes] containing the logits.
+        eps: Small epsilon to avoid numerical issues.
+    Returns:
+        The sharpness of the logits.
+    """
+    logits = logits.detach().cpu().numpy()
+    return np.mean(np.log(np.exp(np.clip(logits,-clip,clip)).sum(axis=1) + eps))
+
+def sharpness_gap(teacher_logits, student_logits, eps=1e-9):
+    """Computes the sharpness gap between the teacher and student logits.
+    Args:
+        teacher_logits: Tensor of shape [batch_size, num_classes] containing the teacher logits.
+        student_logits: Tensor of shape [batch_size, num_classes] containing the student logits.
+        eps: Small epsilon to avoid numerical issues.
+    Returns:
+        The sharpness gap between the teacher and student logits.
+    """
+    teacher_sharpness = sharpness(teacher_logits, eps)
+    student_sharpness = sharpness(student_logits, eps)
+    return teacher_sharpness - student_sharpness, teacher_sharpness, student_sharpness
+
+class AverageMeter(object):
+    """Computes and stores the average and current value"""
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum / self.count

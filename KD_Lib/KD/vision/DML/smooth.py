@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import torch
 import torch.nn.functional as F
-from KD_Lib.KD.common.utils import AverageMeter, sharpness, sharpness_gap
+from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap
 from KD_Lib.KD.vision.DML.shake import Shake
 
 class Smooth(Shake):
@@ -65,11 +65,11 @@ class Smooth(Shake):
                 # classification loss smooth head
                 C = self.loss_ce(pred_feat_s, label)
                 # distillation loss smooth head <-> teacher
-                D = F.mse_loss(pred_feat_s, logit_t.detach())
+                # D = F.mse_loss(pred_feat_s, logit_t.detach())
                 # distillation loss student <-> teacher
                 # E = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
                 #                                            F.log_softmax(logit_t.detach()/self.cfg.T, dim=1))
-                loss_kd = A + B + C + D # + E
+                loss_kd = A + B + C # + D # + E
                 loss = loss_cls + self.cfg.W * loss_kd
                 loss.backward()
                 self.optimizers[-1].step()

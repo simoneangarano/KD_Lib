@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import torch
 import torch.nn.functional as F
-from KD_Lib.KD.common.utils import AverageMeter, sharpness, sharpness_gap
+from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap
 from KD_Lib.KD.vision.DML.dml import DML
 
 class Shake(DML):
@@ -153,7 +153,6 @@ class Shake(DML):
 
             epoch_val_acc = correct / length_of_dataset
             return outputs, epoch_val_acc, sharp.avg
-
 
     def evaluate(self, verbose=False, teacher=False):
         """

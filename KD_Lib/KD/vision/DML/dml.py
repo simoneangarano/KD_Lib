@@ -4,7 +4,7 @@ from copy import deepcopy
 import torch
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
-from KD_Lib.KD.common.utils import AverageMeter, sharpness, sharpness_gap
+from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap
 
 class DML:
     """

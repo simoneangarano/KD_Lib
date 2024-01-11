@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
-from KD_Lib.KD.common.utils import sharpness, sharpness_gap, AverageMeter
+from KD_Lib.utils import sharpness, sharpness_gap, AverageMeter
 
 class BaseClass:
     """
