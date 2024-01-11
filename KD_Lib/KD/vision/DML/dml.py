@@ -47,7 +47,6 @@ class DML:
 
         num_students = len(self.models)
         length_of_dataset = len(self.train_loader.dataset)
-        best_acc = 0.0
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
         s_sharp_train, t_sharp_train, g_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
         self.best_student_model_weights = deepcopy(self.models[0].state_dict())
@@ -85,7 +84,7 @@ class DML:
                     student_loss.backward()
                     self.optimizers[i].step()
 
-                g_sharp, s_sharp, t_sharp = sharpness_gap(out_j, out_i)
+                g_sharp, t_sharp, s_sharp = sharpness_gap(out_j, out_i) # j is teacher, i is student
                 s_sharp_train.update(s_sharp), t_sharp_train.update(t_sharp), g_sharp_train.update(g_sharp)
                 epoch_loss.update(student_loss.item()), epoch_ce_loss.update(loss_ce.item()), epoch_kd_loss.update(loss_kd.item())
 
@@ -102,8 +101,11 @@ class DML:
             s_epoch_acc = s_correct / length_of_dataset
             
             val_accs, t_sharp_val, s_sharp_val, g_sharp_val = self.evaluate(verbose=False)
-            if val_accs[-1] > best_acc:
-                best_acc = val_accs[-1]
+            self.cfg.VACC['T_LAST'] = val_accs[0]
+            self.cfg.VACC['S_LAST'] = val_accs[-1]
+            if val_accs[-1] > self.cfg.VACC['S_BEST']:
+                self.cfg.VACC['S_BEST'] = val_accs[-1]
+                self.cfg.VACC['T_BEST'] = val_accs[0]
                 self.best_student_model_weights = deepcopy(self.models[-1].state_dict())
                 self.best_student = self.models[-1]
 

@@ -107,7 +107,6 @@ class BaseClass:
         self.teacher_model.eval()
         self.student_model.train()
         length_of_dataset = len(self.train_loader.dataset)
-        best_acc = 0.0
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
         g_sharp_train, t_sharp_train, s_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
         self.best_student_model_weights = deepcopy(self.student_model.state_dict())
@@ -158,9 +157,8 @@ class BaseClass:
             _, _, t_sharp_val = self._evaluate_model(self.teacher_model)
             self.cfg.VACC['S_LAST'] = epoch_val_acc
 
-            if epoch_val_acc > best_acc:
-                best_acc = epoch_val_acc
-                self.cfg.VACC['S_BEST'] = best_acc
+            if epoch_val_acc > self.cfg.VACC['S_BEST']:
+                self.cfg.VACC['S_BEST'] = epoch_val_acc
                 self.best_student_model_weights = deepcopy(
                     self.student_model.state_dict()
                 )
