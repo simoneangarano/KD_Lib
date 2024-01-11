@@ -116,3 +116,16 @@ tb/
 ```
 I have tried to add the following to my .gitignore file:
 ```
+
+# IDE Files
+.vscode/
+
+# unnecessary data directories created by running mnist
+data
+mnist_data
+Experiments
+cifar_data
+
+.github/*
+models/*
+tb/*
