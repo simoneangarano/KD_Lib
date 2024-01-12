@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import torch
 import torch.nn.functional as F
-from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap
+from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap, log_cfg
 from KD_Lib.KD.vision.DML.dml import DML
 
 class Shake(DML):
@@ -21,12 +21,6 @@ class Shake(DML):
             self.ln = torch.nn.LayerNorm((self.cfg.CLASSES,), elementwise_affine=False, eps=1e-7).to(self.device)
 
     def train_students(self, save_model=True):
-        self.models[-1].to(self.device)
-        self.models[-1].train()
-        self.models[0].to(self.device)
-        self.models[0].eval()
-        self.models[1].to(self.device)
-        self.models[1].train() # ShakeHead
 
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
@@ -40,6 +34,7 @@ class Shake(DML):
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
             s_sharp_train.reset(), t_sharp_train.reset(), g_sharp_train.reset()
             t_correct, s_correct = 0, 0
+            self.set_models(mode='train_student')
 
             for (data, label) in self.train_loader:
                 data = data.to(self.device)
@@ -112,6 +107,7 @@ class Shake(DML):
                 self.writer.add_scalar("Sharpness Teacher Val", t_sharp_val, ep)
                 self.writer.add_scalar("Sharpness Gap Train", g_sharp_train.avg, ep)
                 self.writer.add_scalar("Sharpness Gap Val", g_sharp_val, ep)
+                log_cfg(self.cfg)
 
             print(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
                   f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}",
@@ -128,7 +124,6 @@ class Shake(DML):
             Evaluate the given model's accuaracy over val set.
             For internal use only.
             """
-            model = [m.eval() for m in model]
             length_of_dataset = len(self.val_loader.dataset)
             correct = 0
             outputs = []
@@ -159,7 +154,7 @@ class Shake(DML):
         Evaluate method for printing accuracies of the trained student networks
 
         """        
-        models = [deepcopy(m).to(self.device) for m in self.models]
+        models = [deepcopy(m).eval().to(self.device) for m in self.models]
         if teacher:
             _, val_acc_t, sharp_t = self._evaluate_model(models[:1])
             return val_acc_t, sharp_t
@@ -175,10 +170,8 @@ class Shake(DML):
         """
         Function that will be training the teacher
         """
-        self.models[0].train()
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, train_sharp = AverageMeter(), AverageMeter()
-        best_acc = 0.0
         self.best_teacher_model_weights = deepcopy(self.models[0].state_dict())
 
         save_dir = os.path.dirname(self.cfg.TEACHER_WEIGHTS)
@@ -189,9 +182,10 @@ class Shake(DML):
 
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
-            self.models[0].train()
             epoch_loss.reset()
             correct = 0
+            self.set_models(mode='train_teacher')
+
             for (data, label) in self.train_loader:
                 data = data.to(self.device)
                 label = label.to(self.device)
@@ -211,9 +205,10 @@ class Shake(DML):
 
             epoch_acc = correct / length_of_dataset
             epoch_val_acc, val_sharp = self.evaluate(teacher=True)
+            self.cfg.VACC['T_LAST'] = epoch_val_acc
 
-            if epoch_val_acc > best_acc:
-                best_acc = epoch_val_acc
+            if epoch_val_acc > self.cfg.VACC['T_BEST']:
+                self.cfg.VACC['T_BEST'] = epoch_val_acc
                 self.best_teacher_model_weights = deepcopy(self.models[0].state_dict())
 
             if self.cfg.LOG:
@@ -222,10 +217,11 @@ class Shake(DML):
                 self.writer.add_scalar("Accuracy Teacher Val", epoch_val_acc, ep)
                 self.writer.add_scalar("Sharpness Teacher Train", train_sharp.avg, ep)
                 self.writer.add_scalar("Sharpness Teacher Val", val_sharp, ep)
+                log_cfg(self.cfg)
 
             print(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e}, Loss: {(epoch_loss.avg):.4f},", 
                   f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
-            print("-" * 70)
+            print("-" * 100)
 
             self.schedulers[0].step()
 
@@ -237,3 +233,15 @@ class Shake(DML):
         if self.cfg.LAYER_NORM:
             return self.ln(x) *  3.1415
         return x
+
+    def set_models(self, mode='eval'):
+        if mode == 'eval':
+            [model.eval() for model in self.models]
+        elif mode == 'train_teacher':
+            self.models[0].train(), self.models[1].eval(), self.models[-1].eval()
+        elif mode == 'train_student':
+            self.models[0].eval(), self.models[1].train(), self.models[-1].train()
+        elif mode == 'train':
+            [model.train() for model in self.models]
+        else:
+            raise ValueError(f"Mode {mode} not supported.")

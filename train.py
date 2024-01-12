@@ -4,10 +4,10 @@ import torch
 from KD_Lib.models import model_dict
 from KD_Lib.models.resnet_torch import get_ResNet, monkey_patch
 from KD_Lib.models.shake import ShakeHead
-from KD_Lib.KD import VanillaKD, DML, Shake, Smooth
+from KD_Lib.KD import VanillaKD, DML, Shake, Smooth, FNKD
 from KD_Lib.datasets import get_dataset, get_cifar100_dataloaders
-from KD_Lib.utils import get_optim_sched
-# os.environ["CUDA_VISIBLE_DEVICES"] = '5'
+from KD_Lib.utils import get_optim_sched, log_cfg
+# os.environ["CUDA_VISIBLE_DEVICES"] = '5'
 
 # Hyperparameters
 class Cfg:
@@ -17,8 +17,14 @@ class Cfg:
                 setattr(self, key, dict[key])
             return
         
-        self.MODE: str = 'smooth' # 'kd' or 'dml' or 'shake' or 'smooth' or 'baseline'
+        self.MODE: str = 'fnkd' # 'kd' or 'dml' or 'shake' or 'smooth' or 'fnkd' or 'baseline'
         self.DATASET: str = 'cifar100' # 'cifar10' or 'cifar100'
+        self.EXP: str = f"{self.MODE}_{self.DATASET}_fn"
+
+        self.T: float = 1.0 if self.MODE == 'dml' else 4.0
+        self.W: float = 0.9 if self.MODE == 'kd' else 9 if self.MODE == 'fnkd' else 1.0
+        self.FEAT_NORM: bool = True if self.MODE == 'fnkd' else False
+
         self.IMSIZE: int = 32 if 'cifar' in self.DATASET else 227
         self.CLASSES: int = 0
         self.DATA_PATH: str = '../Knowledge-Distillation-Zoo/datasets/'
@@ -32,18 +38,15 @@ class Cfg:
         self.LR_MIN: float = 5e-5
         self.MOMENTUM: float = 0.9
         self.WD: float = 5e-4
-        self.T: float = 4.0
-        self.W: float = 1.0
-        self.FEAT_NORM: bool = False
         self.EPOCHS: int = 240
         self.SCHEDULER: str = 'step' # 'cos' or 'step' or 'lin'
         self.STEPS: list = [150, 180, 210]
         self.GAMMA: float = 0.1
         self.TEACHER_WEIGHTS: str = f'./models/teacher_{self.DATASET}_kd.pt'
         self.PARALLEL: bool = False
-        self.EXP: str = f"{self.MODE}_{self.DATASET}_no_mse"
         self.LOG: bool = True
-        self.LOG_DIR: str = f"./tb/{self.EXP}/"
+        self.LOG_DIR: str = f"./exp/"
+        self.TB_DIR: str = f"./tb/{self.EXP}/"
         self.SAVE_PATH: str = f"./models/{self.EXP}.pt"
         self.DEVICE: str = 'cuda'
         self.VACC: dict = {
@@ -87,15 +90,20 @@ def main():
         distiller.train_student()
         distiller.evaluate(teacher=False, verbose=True) # Evaluate the student network
 
+    if cfg.MODE == 'fnkd': # Vanilla KD
+        distiller = FNKD(models, loaders, optimizers, schedulers, losses, cfg)
+        distiller.train_student()
+        distiller.evaluate(teacher=False, verbose=True) # Evaluate the student network
+
     elif cfg.MODE == 'dml': # DML
         distiller = DML(models, loaders, optimizers, schedulers, losses, cfg)
         distiller.train_students()
         distiller.evaluate(verbose=True)
 
     elif cfg.MODE == 'shake': # SHAKE
-        data = torch.randn(2, 3, cfg.IMSIZE, cfg.IMSIZE).cuda()
+        data = torch.randn(2, 3, cfg.IMSIZE, cfg.IMSIZE).to(cfg.DEVICE)
         _, feat_t, _, _ = models[0](data, return_feats=True)
-        shake = ShakeHead(feat_t).to('cuda')
+        shake = ShakeHead(feat_t).to(cfg.DEVICE)
         models.insert(1, shake)
 
         optim_sched = get_optim_sched(models[1:], cfg, single=True)
@@ -114,7 +122,7 @@ def main():
         distiller.evaluate(verbose=True)
 
     elif cfg.MODE == 'smooth': # New method
-        smooth = torch.nn.Linear(2048, cfg.CLASSES).to(cfg.DEVICE)
+        smooth = torch.nn.Linear(64, cfg.CLASSES).to(cfg.DEVICE)
         models.insert(1, smooth)
 
         optim_sched = get_optim_sched(models[1:], cfg, single=True)
@@ -126,8 +134,8 @@ def main():
             distiller.train_teacher()
         else:
             distiller.models[0].load_state_dict(torch.load(cfg.TEACHER_WEIGHTS))
-        distiller.models[1].weight.data = list(distiller.models[0].modules())[-1].weight.data.clone()
-        distiller.models[1].bias.data = list(distiller.models[0].modules())[-1].bias.data.clone()
+        # distiller.models[1].weight.data = list(distiller.models[0].modules())[-1].weight.data.clone()
+        # distiller.models[1].bias.data = list(distiller.models[0].modules())[-1].bias.data.clone()
 
         t_val, _ = distiller.evaluate(teacher=True)
         print(f"Teacher Accuracy: {t_val:.4f}%")
@@ -144,10 +152,7 @@ def main():
         distiller.evaluate(teacher=True, verbose=True) # Evaluate the student network
 
     # Save config
-    if not os.path.exists(f"./exp/"):
-        os.makedirs(f"./exp/")
-    with open(f"./exp/{cfg.EXP}.json", "w") as file:
-        json.dump(distiller.cfg.__dict__, file)
+    log_cfg(distiller.cfg)
 
 if __name__ == "__main__":
     main()

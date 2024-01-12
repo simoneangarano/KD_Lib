@@ -4,7 +4,7 @@ from copy import deepcopy
 import torch
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
-from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap
+from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap, log_cfg
 
 class DML:
     """
@@ -30,7 +30,7 @@ class DML:
         self.device = torch.device(self.cfg.DEVICE)
 
         if self.cfg.LOG:
-            self.writer = SummaryWriter(self.cfg.LOG_DIR)
+            self.writer = SummaryWriter(self.cfg.TB_DIR)
             layout = {"Metrics": {"Loss": ["Multiline", ["Loss Teacher", "Loss Student", "CE Student", "KD Student"]],
                                   "Accuracy": ["Multiline", ["Accuracy Teacher Train", "Accuracy Student Train", 
                                                              "Accuracy Student Val", "Accuracy Teacher Val"]],
@@ -41,15 +41,11 @@ class DML:
 
     def train_students(self, save_model=True):
 
-        for model in self.models:
-            model.to(self.device)
-            model.train()
-
         num_students = len(self.models)
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
         s_sharp_train, t_sharp_train, g_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
-        self.best_student_model_weights = deepcopy(self.models[0].state_dict())
+        self.best_student_model_weights = deepcopy(self.models[-1].state_dict())
         self.best_student = self.models[-1]
 
         print("Training Teacher and Student...")
@@ -58,6 +54,8 @@ class DML:
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
             s_sharp_train.reset(), t_sharp_train.reset(), g_sharp_train.reset()
             t_correct, s_correct = 0, 0
+            self.set_models(mode='train')
+
             for (data, label) in self.train_loader:
 
                 data = data.to(self.device)
@@ -123,6 +121,7 @@ class DML:
                 self.writer.add_scalar("Sharpness Teacher Val", t_sharp_val, ep)
                 self.writer.add_scalar("Sharpness Gap Train", g_sharp_train.avg, ep)
                 self.writer.add_scalar("Sharpness Gap Val", g_sharp_val, ep)
+                log_cfg(self.cfg)
 
             print(f"[{ep+1}: {(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
                   f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}",
@@ -140,7 +139,6 @@ class DML:
         Evaluate the given model's accuaracy over val set.
         For internal use only.
         """
-        model.eval()
         length_of_dataset = len(self.val_loader.dataset)
         correct = 0
         outputs = []
@@ -166,11 +164,23 @@ class DML:
         Evaluate method for printing accuracies of the trained student networks
         """
         val_accs, val_sharps = [], []
-        for i, model in enumerate(self.models):
-            model = deepcopy(model).to(self.device)
+        for model in self.models:
+            model = deepcopy(model).eval().to(self.device)
             _, val_acc_i, sharp = self._evaluate_model(model)
             val_accs.append(val_acc_i)
             val_sharps.append(sharp)
         if verbose:
             print(f"Teacher Accuracy: {val_accs[0]:.4f}, Student Accuracy: {val_accs[1]:.4f}")
         return val_accs, val_sharps[0], val_sharps[-1], val_sharps[0] - val_sharps[-1]
+    
+    def set_models(self, mode='eval'):
+        if mode == 'eval':
+            [model.eval() for model in self.models]
+        elif mode == 'train_teacher':
+            self.models[0].train(), self.models[-1].eval()
+        elif mode == 'train_student':
+            self.models[0].eval(), self.models[-1].train()
+        elif mode == 'train':
+            [model.train() for model in self.models]
+        else:
+            raise ValueError(f"Mode {mode} not supported.")

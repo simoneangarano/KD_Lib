@@ -1,3 +1,4 @@
+import os, json
 import numpy as np
 import torch
 
@@ -68,3 +69,9 @@ class AverageMeter(object):
         self.sum += val * n
         self.count += n
         self.avg = self.sum / self.count
+
+def log_cfg(cfg):
+    if not os.path.exists(cfg.LOG_DIR):
+        os.makedirs(cfg.LOG_DIR)
+    with open(f"{cfg.LOG_DIR}{cfg.EXP}.json", "w") as file:
+        json.dump(cfg.__dict__, file)

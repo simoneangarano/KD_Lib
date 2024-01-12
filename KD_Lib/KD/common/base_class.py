@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
-from KD_Lib.utils import sharpness, sharpness_gap, AverageMeter
+from KD_Lib.utils import sharpness, sharpness_gap, AverageMeter, log_cfg
 
 class BaseClass:
     """
@@ -29,7 +29,7 @@ class BaseClass:
         self.device = torch.device(self.cfg.DEVICE)
 
         if self.cfg.LOG:
-            self.writer = SummaryWriter(self.cfg.LOG_DIR)
+            self.writer = SummaryWriter(self.cfg.TB_DIR)
             layout = {"Metrics": {"Loss":     ["Multiline", ["Loss Teacher", "Loss Student", "CE Student", "KD Student"]],
                                   "Accuracy": ["Multiline", ["Accuracy Teacher Train", "Accuracy Student Train", 
                                                              "Accuracy Student Val", "Accuracy Teacher Val"]],
@@ -42,10 +42,8 @@ class BaseClass:
         """
         Function that will be training the teacher
         """
-        self.teacher_model.train()
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, train_sharp = AverageMeter(), AverageMeter()
-        best_acc = 0.0
         self.best_teacher_model_weights = deepcopy(self.teacher_model.state_dict())
 
         save_dir = os.path.dirname(self.cfg.TEACHER_WEIGHTS)
@@ -58,6 +56,8 @@ class BaseClass:
             t0 = time.time()
             epoch_loss.reset()
             correct = 0
+            self.set_models(mode='train_teacher')
+
             for (data, label) in self.train_loader:
                 data = data.to(self.device)
                 label = label.to(self.device)
@@ -78,9 +78,8 @@ class BaseClass:
             epoch_val_acc, val_sharp = self.evaluate(teacher=True)
             self.cfg.VACC['T_LAST'] = epoch_val_acc
 
-            if epoch_val_acc > best_acc:
-                best_acc = epoch_val_acc
-                self.cfg.VACC['T_BEST'] = best_acc
+            if epoch_val_acc > self.cfg.VACC['T_BEST']:
+                self.cfg.VACC['T_BEST'] = epoch_val_acc
                 self.best_teacher_model_weights = deepcopy(self.teacher_model.state_dict())
 
             if self.cfg.LOG:
@@ -89,6 +88,7 @@ class BaseClass:
                 self.writer.add_scalar("Accuracy Teacher Val", epoch_val_acc, ep)
                 self.writer.add_scalar("Sharpness Teacher Train", train_sharp.avg, ep)
                 self.writer.add_scalar("Sharpness Teacher Val", val_sharp, ep)
+                log_cfg(self.cfg)
 
             print(f"[{ep+1}: {(time.time() - t0)/60.0:.1f}m] LR: {self.scheduler_teacher.get_last_lr()[0]:.1e}, Loss: {(epoch_loss.avg):.4f},", 
                   f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
@@ -104,8 +104,6 @@ class BaseClass:
         """
         Function to train student model - for internal use only.
         """
-        self.teacher_model.eval()
-        self.student_model.train()
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
         g_sharp_train, t_sharp_train, s_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
@@ -120,9 +118,7 @@ class BaseClass:
             t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset()
             correct = 0
-
-            self.teacher_model.eval()
-            self.student_model.train()
+            self.set_models(mode='train_student')
 
             for (data, label) in self.train_loader:
 
@@ -134,12 +130,15 @@ class BaseClass:
                 with torch.no_grad():
                     teacher_out = self.teacher_model(data, norm_feats=self.cfg.FEAT_NORM)
                 student_out = self.student_model(data, norm_feats=self.cfg.FEAT_NORM)
+                loss, ce_loss, kd_loss = self.calculate_kd_loss(student_out, teacher_out, label)
 
+                if isinstance(teacher_out, tuple):
+                    teacher_out = teacher_out[0]
+                    student_out = student_out[0]
                 g_sharp, t_sharp, s_sharp = sharpness_gap(teacher_out, student_out)
                 g_sharp_train.update(g_sharp)
                 t_sharp_train.update(t_sharp)
                 s_sharp_train.update(s_sharp)
-                loss, ce_loss, kd_loss = self.calculate_kd_loss(student_out, teacher_out, label)
 
                 loss.backward()
                 self.optimizer_student.step()
@@ -159,9 +158,7 @@ class BaseClass:
 
             if epoch_val_acc > self.cfg.VACC['S_BEST']:
                 self.cfg.VACC['S_BEST'] = epoch_val_acc
-                self.best_student_model_weights = deepcopy(
-                    self.student_model.state_dict()
-                )
+                self.best_student_model_weights = deepcopy(self.student_model.state_dict())
 
             if self.cfg.LOG:
                 self.writer.add_scalar("Loss Student", epoch_loss.avg, ep)
@@ -175,6 +172,7 @@ class BaseClass:
                 self.writer.add_scalar("Sharpness Gap Train", g_sharp_train.avg, ep)
                 self.writer.add_scalar("Sharpness Teacher Val", t_sharp_val, ep)
                 self.writer.add_scalar("Sharpness Gap Val", t_sharp_val - s_sharp_val, ep)
+                log_cfg(self.cfg)
 
             print(
                 f"[{ep+1}: {(time.time() - t0)/60.0:.1f}m] LR: {self.scheduler_student.get_last_lr()[0]:.1e},",
@@ -210,7 +208,6 @@ class BaseClass:
         Evaluate the given model's accuaracy over val set.
         For internal use only.
         """
-        model.eval()
         length_of_dataset = len(self.val_loader.dataset)
         correct = 0
         outputs = []
@@ -235,10 +232,18 @@ class BaseClass:
         Evaluate method for printing accuracies of the trained network
         """
         if teacher:
-            model = deepcopy(self.teacher_model).to(self.device)
+            model = deepcopy(self.teacher_model).eval().to(self.device)
         else:
-            model = deepcopy(self.student_model).to(self.device)
+            model = deepcopy(self.student_model).eval().to(self.device)
         _, accuracy, sharp = self._evaluate_model(model)
         if verbose:
             print(f"Accuracy: {accuracy:.4f}")
         return accuracy, sharp
+    
+    def set_models(self, mode='eval'):
+        if mode == 'eval':
+            self.teacher_model.eval(), self.student_model.eval()
+        elif mode == 'train_teacher':
+            self.teacher_model.train(), self.student_model.eval()
+        elif mode == 'train_student':
+            self.teacher_model.eval(), self.student_model.train()

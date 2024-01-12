@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import torch
 import torch.nn.functional as F
-from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap
+from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap, log_cfg
 from KD_Lib.KD.vision.DML.shake import Shake
 
 class Smooth(Shake):
@@ -19,17 +19,11 @@ class Smooth(Shake):
         super().__init__(models, loaders, optimizers, schedulers, losses, cfg)        
     
     def train_students(self, save_model=True):
-        self.models[-1].to(self.device)
-        self.models[-1].train()
-        self.models[0].to(self.device)
-        self.models[0].eval()
-        self.models[1].to(self.device)
-        self.models[1].train() # SmoothHead
 
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
         s_sharp_train, t_sharp_train, g_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
-        self.best_student_model_weights = deepcopy(self.models[0].state_dict())
+        self.best_student_model_weights = deepcopy(self.models[-1].state_dict())
         self.best_student = self.models[-1]
 
         print("Training Teacher and Student...")
@@ -38,7 +32,8 @@ class Smooth(Shake):
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
             s_sharp_train.reset(), t_sharp_train.reset(), g_sharp_train.reset()
             t_correct, s_correct = 0, 0
-
+            self.set_models(mode='train_student')
+            
             for (data, label) in self.train_loader:
                 data = data.to(self.device)
                 label = label.to(self.device)
@@ -65,11 +60,11 @@ class Smooth(Shake):
                 # classification loss smooth head
                 C = self.loss_ce(pred_feat_s, label)
                 # distillation loss smooth head <-> teacher
-                # D = F.mse_loss(pred_feat_s, logit_t.detach())
+                D = F.mse_loss(pred_feat_s, logit_t.detach())
                 # distillation loss student <-> teacher
                 # E = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
                 #                                            F.log_softmax(logit_t.detach()/self.cfg.T, dim=1))
-                loss_kd = A + B + C # + D # + E
+                loss_kd = A + B + C + D # + E
                 loss = loss_cls + self.cfg.W * loss_kd
                 loss.backward()
                 self.optimizers[-1].step()
@@ -96,8 +91,8 @@ class Smooth(Shake):
             if val_accs[-1] > self.cfg.VACC['S_BEST']:
                 self.cfg.VACC['S_BEST'] = val_accs[-1]
                 self.cfg.VACC['T_BEST'] = val_accs[0]
-                self.best_student_model_weights = deepcopy(self.models[1].state_dict())
-                self.best_student = self.models[1]
+                self.best_student_model_weights = deepcopy(self.models[-1].state_dict())
+                self.best_student = self.models[-1]
 
             if self.cfg.LOG:
                 self.writer.add_scalar("Loss Student", epoch_loss.avg, ep)
@@ -113,6 +108,7 @@ class Smooth(Shake):
                 self.writer.add_scalar("Sharpness Teacher Val", t_sharp_val, ep)
                 self.writer.add_scalar("Sharpness Gap Train", g_sharp_train.avg, ep)
                 self.writer.add_scalar("Sharpness Gap Val", g_sharp_val, ep)
+                log_cfg(self.cfg)
 
             print(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
                   f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}",
@@ -129,7 +125,6 @@ class Smooth(Shake):
             Evaluate the given model's accuaracy over val set.
             For internal use only.
             """
-            model = [m.eval() for m in model]
             length_of_dataset = len(self.val_loader.dataset)
             correct = 0
             outputs = []

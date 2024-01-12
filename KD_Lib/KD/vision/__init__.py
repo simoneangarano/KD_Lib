@@ -9,4 +9,4 @@ from .RCO import RCO
 from .RKD import RKDLoss
 from .TAKD import TAKD
 from .teacher_free import SelfTraining, VirtualTeacher
-from .vanilla import VanillaKD
+from .vanilla import VanillaKD, FNKD

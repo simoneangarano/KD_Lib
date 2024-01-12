@@ -17,5 +17,6 @@ from .vision import (
     SelfTraining,
     SoftRandom,
     VanillaKD,
+    FNKD,
     VirtualTeacher,
 )
