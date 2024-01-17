@@ -1,6 +1,5 @@
 import time
 from copy import deepcopy
-
 import torch
 import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
@@ -11,16 +10,7 @@ class DML:
     Implementation of "Deep Mutual Learning" https://arxiv.org/abs/1706.00384
     """
 
-    def __init__(
-        self,
-        models,
-        loaders,
-        optimizers,
-        schedulers,
-        losses,
-        cfg
-    ):
-        
+    def __init__(self, models, loaders, optimizers, schedulers, losses, cfg):
         self.models = models
         self.train_loader, self.val_loader = loaders
         self.optimizers = optimizers
@@ -39,8 +29,7 @@ class DML:
                                   "Sharpness Gap": ["Multiline", ["Sharpness Gap Train", "Sharpness Gap Val"]]}}
             self.writer.add_custom_scalars(layout)
 
-    def train_students(self, save_model=True):
-
+    def train_students(self, save_model=True, stud_teach_kd=True):
         num_students = len(self.models)
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
@@ -72,10 +61,11 @@ class DML:
                         out_i = self.models[i](data, norm_feats=self.cfg.FEAT_NORM)
                         with torch.no_grad():
                             out_j = self.models[j](data, norm_feats=self.cfg.FEAT_NORM)
-                        loss_kd = self.cfg.W * self.cfg.T * self.cfg.T * self.loss_kd(
-                            F.log_softmax(out_i / self.cfg.T, dim=1), 
-                            F.log_softmax(out_j.detach() / self.cfg.T, dim=1))
-                        student_loss += loss_kd
+                        if stud_teach_kd or i == 1: # Student-Teacher KD skipped if stud_teach_kd is False
+                            loss_kd = self.cfg.W * self.cfg.T * self.cfg.T * self.loss_kd(
+                                F.log_softmax(out_i / self.cfg.T, dim=1), 
+                                F.log_softmax(out_j.detach() / self.cfg.T, dim=1))
+                            student_loss += loss_kd
                     student_loss /= num_students - 1
                     loss_ce = self.loss_ce(out_i, label)
                     student_loss += loss_ce

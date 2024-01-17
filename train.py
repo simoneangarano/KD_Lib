@@ -1,4 +1,4 @@
-import os, json
+import os
 from pprint import pformat
 import torch
 from KD_Lib.models import model_dict
@@ -17,12 +17,12 @@ class Cfg:
                 setattr(self, key, dict[key])
             return
         
-        self.MODE: str = 'fnkd' # 'kd' or 'dml' or 'shake' or 'smooth' or 'fnkd' or 'baseline'
+        self.MODE: str = 'ftkd' # 'kd' or 'dml' or 'shake' or 'smooth' or 'fnkd' or 'baseline' or 'ftkd'
         self.DATASET: str = 'cifar100' # 'cifar10' or 'cifar100'
-        self.EXP: str = f"{self.MODE}_{self.DATASET}_fn"
+        self.EXP: str = f"{self.MODE}_{self.DATASET}"
 
-        self.T: float = 1.0 if self.MODE == 'dml' else 4.0
-        self.W: float = 0.9 if self.MODE == 'kd' else 9 if self.MODE == 'fnkd' else 1.0
+        self.T: float = 1.0 if self.MODE in ['dml','ftkd'] else 4.0
+        self.W: float = 0.9 if self.MODE == 'kd' else 1.0 if self.MODE == 'fnkd' else 1.0
         self.FEAT_NORM: bool = True if self.MODE == 'fnkd' else False
 
         self.IMSIZE: int = 32 if 'cifar' in self.DATASET else 227
@@ -98,6 +98,11 @@ def main():
     elif cfg.MODE == 'dml': # DML
         distiller = DML(models, loaders, optimizers, schedulers, losses, cfg)
         distiller.train_students()
+        distiller.evaluate(verbose=True)
+
+    elif cfg.MODE == 'ftkd': # Fine-tuning
+        distiller = DML(models, loaders, optimizers, schedulers, losses, cfg)
+        distiller.train_students(stud_teach_kd=False)
         distiller.evaluate(verbose=True)
 
     elif cfg.MODE == 'shake': # SHAKE

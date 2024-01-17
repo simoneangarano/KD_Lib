@@ -194,6 +194,7 @@ class BaseClass:
         else:
             self.teacher_model.load_state_dict(torch.load(self.cfg.TEACHER_WEIGHTS))
         self.cfg.VACC['T_BEST'], _ = self.evaluate(teacher=True)
+        self.cfg.VACC['T_LAST'] = self.cfg.VACC['T_BEST']
         print(f"Teacher Accuracy: {self.cfg.VACC['T_BEST']:.4f}%")
         self._train_student(save_model=save_model)
 

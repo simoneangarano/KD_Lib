@@ -73,15 +73,16 @@ def _forward_impl_custom_new(self, x: torch.Tensor, return_feats: bool=False, no
     x = self.avgpool(x)
     x = x.view(x.size(0), -1)
     f4 = x
+    x = self.fc(x)
 
     if norm_feats:
-        xl2 = torch.norm(x, p=2, dim=1, keepdim=True)
-        xl2 = torch.clip(xl2,0,2)
-        x1 = F.normalize(x, p=2, dim=1) # x1 
-        xn = torch.mul(x1,xl2)
-        xn = self.fc(xn)
-    
-    x = self.fc(x)
+        # xl2 = torch.norm(f4, p=2, dim=1, keepdim=True)
+        # xl2 = torch.clip(xl2,0,2)
+        # x1 = F.normalize(f4, p=2, dim=1) # x1 
+        # xn = torch.mul(x1,xl2)
+        # xn = self.fc(xn)
+        xl2 = torch.norm(f4, p=2, dim=1, keepdim=True)
+        xn = torch.div(f4, xl2) * 2
 
     if return_feats:
         return x, [f0, f1, f2, f3, f4], self.fc.weight, self.fc.bias
