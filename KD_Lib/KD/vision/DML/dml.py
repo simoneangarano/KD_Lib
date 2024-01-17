@@ -29,7 +29,7 @@ class DML:
                                   "Sharpness Gap": ["Multiline", ["Sharpness Gap Train", "Sharpness Gap Val"]]}}
             self.writer.add_custom_scalars(layout)
 
-    def train_students(self, save_model=True, stud_teach_kd=True):
+    def train_student(self, save_model=True, stud_teach_kd=True):
         num_students = len(self.models)
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
@@ -38,6 +38,7 @@ class DML:
         self.best_student = self.models[-1]
 
         print("Training Teacher and Student...")
+        self.cfg.TIME = time.time()
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
@@ -119,7 +120,8 @@ class DML:
             print("-" * 100)
             for sched in self.schedulers:
                 sched.step()
-
+                
+        self.cfg.TIME = (time.time() - self.cfg.TIME) / 60.0
         self.best_student.load_state_dict(self.best_student_model_weights)
         if save_model:
             torch.save(self.best_student.state_dict(), self.cfg.SAVE_PATH)

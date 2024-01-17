@@ -114,6 +114,7 @@ class BaseClass:
             os.makedirs(save_dir)
 
         print("Training Student...")
+        self.cfg.TIME = time.time()
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset()
@@ -180,6 +181,8 @@ class BaseClass:
                 f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
             print("-" * 100)
             self.scheduler_student.step()
+
+        self.cfg.TIME = (time.time() - self.cfg.TIME) / 60.0
 
         self.student_model.load_state_dict(self.best_student_model_weights)
         if save_model:

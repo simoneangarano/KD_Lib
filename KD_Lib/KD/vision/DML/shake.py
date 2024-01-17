@@ -20,7 +20,7 @@ class Shake(DML):
         if self.cfg.LAYER_NORM:
             self.ln = torch.nn.LayerNorm((self.cfg.CLASSES,), elementwise_affine=False, eps=1e-7).to(self.device)
 
-    def train_students(self, save_model=True):
+    def train_student(self, save_model=True):
 
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
@@ -29,6 +29,7 @@ class Shake(DML):
         self.best_student = self.models[-1]
 
         print("Training Teacher and Student...")
+        self.cfg.TIME = time.time() 
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
@@ -115,6 +116,7 @@ class Shake(DML):
             print("-" * 100)
             self.schedulers[-1].step()
 
+        self.cfg.TIME = (time.time() - self.cfg.TIME) / 60.0
         self.best_student.load_state_dict(self.best_student_model_weights)
         if save_model:
             torch.save(self.best_student.state_dict(), self.cfg.SAVE_PATH)

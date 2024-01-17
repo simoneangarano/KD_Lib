@@ -83,11 +83,11 @@ def _forward_impl_custom_new(self, x: torch.Tensor, return_feats: bool=False, no
         # xn = self.fc(xn)
         xl2 = torch.norm(f4, p=2, dim=1, keepdim=True)
         xn = torch.div(f4, xl2) * 2
-
+        xn = self.fc(xn)
+        x = (x, xn)
+    
     if return_feats:
         return x, [f0, f1, f2, f3, f4], self.fc.weight, self.fc.bias
-    elif norm_feats:
-        return x, xn
     else:
         return x
 

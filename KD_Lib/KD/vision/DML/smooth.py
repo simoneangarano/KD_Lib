@@ -18,7 +18,7 @@ class Smooth(Shake):
     ):
         super().__init__(models, loaders, optimizers, schedulers, losses, cfg)        
     
-    def train_students(self, save_model=True):
+    def train_student(self, save_model=True):
 
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
@@ -27,6 +27,7 @@ class Smooth(Shake):
         self.best_student = self.models[-1]
 
         print("Training Teacher and Student...")
+        self.cfg.TIME = time.time()
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
@@ -42,9 +43,14 @@ class Smooth(Shake):
                     optim.zero_grad()
 
                 logit_s = self.models[-1](data, norm_feats=self.cfg.FEAT_NORM)
+
                 with torch.no_grad():
                     logit_t, feat_t, _, _ = self.models[0](data, return_feats=True, norm_feats=self.cfg.FEAT_NORM)
                     feat_t = [f.detach() for f in feat_t]
+
+                if isinstance(logit_t, tuple):
+                    logit_t_orig, logit_t = logit_t
+                    logit_s_orig, logit_s = logit_s
 
                 pred_feat_s = self.models[1](feat_t[-1]) # Feature selection
                 logit_s = self.norm(logit_s)
@@ -69,7 +75,7 @@ class Smooth(Shake):
                 loss.backward()
                 self.optimizers[-1].step()
 
-                g_sharp, t_sharp, s_sharp = sharpness_gap(logit_t, logit_s)
+                g_sharp, t_sharp, s_sharp = sharpness_gap(logit_t_orig, logit_s_orig)
                 s_sharp_train.update(s_sharp), t_sharp_train.update(t_sharp), g_sharp_train.update(g_sharp)
                 epoch_loss.update(loss.item()), epoch_ce_loss.update(loss_cls.item()), epoch_kd_loss.update(loss_kd.item())
 
@@ -77,7 +83,7 @@ class Smooth(Shake):
                 correct_preds = []
                 predictions.append(pred_feat_s.argmax(dim=1, keepdim=True))
                 correct_preds.append(predictions[0].eq(label.view_as(predictions[0])).sum().item())
-                predictions.append(logit_s.argmax(dim=1, keepdim=True))
+                predictions.append(logit_s_orig.argmax(dim=1, keepdim=True))
                 correct_preds.append(predictions[1].eq(label.view_as(predictions[1])).sum().item())
                 t_correct += correct_preds[0]
                 s_correct += correct_preds[-1]
@@ -116,6 +122,7 @@ class Smooth(Shake):
             print("-" * 100)
             self.schedulers[-1].step()
 
+        self.cfg.TIME = (time.time() - self.cfg.TIME) / 60.0
         self.best_student.load_state_dict(self.best_student_model_weights)
         if save_model:
             torch.save(self.best_student.state_dict(), self.cfg.SAVE_PATH)

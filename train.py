@@ -17,13 +17,13 @@ class Cfg:
                 setattr(self, key, dict[key])
             return
         
-        self.MODE: str = 'ftkd' # 'kd' or 'dml' or 'shake' or 'smooth' or 'fnkd' or 'baseline' or 'ftkd'
+        self.MODE: str = 'smooth' # 'kd' or 'dml' or 'shake' or 'smooth' or 'fnkd' or 'baseline' or 'ftkd'
         self.DATASET: str = 'cifar100' # 'cifar10' or 'cifar100'
-        self.EXP: str = f"{self.MODE}_{self.DATASET}"
+        self.EXP: str = f"{self.MODE}_{self.DATASET}_fn"
 
-        self.T: float = 1.0 if self.MODE in ['dml','ftkd'] else 4.0
+        self.T: float = 1.0 if self.MODE in [] else 4.0
         self.W: float = 0.9 if self.MODE == 'kd' else 1.0 if self.MODE == 'fnkd' else 1.0
-        self.FEAT_NORM: bool = True if self.MODE == 'fnkd' else False
+        self.FEAT_NORM: bool = True if self.MODE in ['fnkd','smooth'] else False
 
         self.IMSIZE: int = 32 if 'cifar' in self.DATASET else 227
         self.CLASSES: int = 0
@@ -49,6 +49,7 @@ class Cfg:
         self.TB_DIR: str = f"./tb/{self.EXP}/"
         self.SAVE_PATH: str = f"./models/{self.EXP}.pt"
         self.DEVICE: str = 'cuda'
+        self.TIME: float = 0.0
         self.VACC: dict = {
             'T_LAST': 0.0,
             'T_BEST': 0.0,
@@ -97,12 +98,12 @@ def main():
 
     elif cfg.MODE == 'dml': # DML
         distiller = DML(models, loaders, optimizers, schedulers, losses, cfg)
-        distiller.train_students()
+        distiller.train_student()
         distiller.evaluate(verbose=True)
 
     elif cfg.MODE == 'ftkd': # Fine-tuning
         distiller = DML(models, loaders, optimizers, schedulers, losses, cfg)
-        distiller.train_students(stud_teach_kd=False)
+        distiller.train_student(stud_teach_kd=False)
         distiller.evaluate(verbose=True)
 
     elif cfg.MODE == 'shake': # SHAKE
@@ -123,7 +124,7 @@ def main():
         t_val, _ = distiller.evaluate(teacher=True)
         print(f"Teacher Accuracy: {t_val:.4f}%")
 
-        distiller.train_students()
+        distiller.train_student()
         distiller.evaluate(verbose=True)
 
     elif cfg.MODE == 'smooth': # New method
@@ -145,7 +146,7 @@ def main():
         t_val, _ = distiller.evaluate(teacher=True)
         print(f"Teacher Accuracy: {t_val:.4f}%")
 
-        distiller.train_students()
+        distiller.train_student()
         distiller.evaluate(verbose=True)
 
     else: # Baseline
