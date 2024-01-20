@@ -69,7 +69,7 @@ class Shake(DML):
                 loss.backward()
                 self.optimizers[-1].step()
 
-                g_sharp, t_sharp, s_sharp = sharpness_gap(logit_t, logit_s)
+                g_sharp, t_sharp, s_sharp = sharpness_gap(pred_feat_s, logit_s)
                 s_sharp_train.update(s_sharp), t_sharp_train.update(t_sharp), g_sharp_train.update(g_sharp)
                 epoch_loss.update(loss.item()), epoch_ce_loss.update(loss_cls.item()), epoch_kd_loss.update(loss_kd.item())
 
@@ -110,7 +110,7 @@ class Shake(DML):
                 self.writer.add_scalar("Sharpness Gap Val", g_sharp_val, ep)
                 log_cfg(self.cfg)
 
-            print(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
+            print(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[-1].get_last_lr()[0]:.1e},",
                   f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}",
                   f"\n[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
             print("-" * 100)
@@ -240,9 +240,9 @@ class Shake(DML):
         if mode == 'eval':
             [model.eval() for model in self.models]
         elif mode == 'train_teacher':
-            self.models[0].train(), self.models[1].eval(), self.models[-1].eval()
+            [m.train() for m in self.models[:-2]], [m.eval() for m in self.models[-2:]]
         elif mode == 'train_student':
-            self.models[0].eval(), self.models[1].train(), self.models[-1].train()
+            [m.eval() for m in self.models[:-2]], [m.train() for m in self.models[-2:]]
         elif mode == 'train':
             [model.train() for model in self.models]
         else:

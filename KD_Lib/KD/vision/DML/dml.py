@@ -15,7 +15,11 @@ class DML:
         self.train_loader, self.val_loader = loaders
         self.optimizers = optimizers
         self.schedulers = schedulers
-        self.loss_ce, self.loss_kd = losses
+        if len(losses) == 2:
+            self.loss_ce, self.loss_kd = losses
+        else:
+            self.loss_ce, self.loss_kd, self.loss_sharp = losses
+
         self.cfg = cfg
         self.device = torch.device(self.cfg.DEVICE)
 

@@ -38,7 +38,11 @@ def sharpness(logits, eps=1e-9, clip=70):
         The sharpness of the logits.
     """
     logits = logits.detach().cpu().numpy()
-    return np.mean(np.log(np.exp(np.clip(logits,-clip,clip)).sum(axis=1) + eps))
+    if clip != np.inf:
+        logits = np.clip(logits, -clip, clip)
+    else: 
+        logits = logits.astype(np.float128)
+    return np.mean(np.log(np.exp(logits).sum(axis=1) + eps))
 
 def sharpness_gap(teacher_logits, student_logits, eps=1e-9):
     """Computes the sharpness gap between the teacher and student logits.
@@ -75,3 +79,23 @@ def log_cfg(cfg):
         os.makedirs(cfg.LOG_DIR)
     with open(f"{cfg.LOG_DIR}{cfg.EXP}.json", "w") as file:
         json.dump(cfg.__dict__, file)
+
+def sharpness_torch(logits):
+    """Computes the sharpness of the logits.
+    Args:
+        logits: Tensor of shape [batch_size, num_classes] containing the logits.
+        eps: Small epsilon to avoid numerical issues.
+    Returns:
+        The sharpness of the logits.
+    """
+    logits = torch.exp(logits).sum(dim=1).log()
+    return logits
+
+class SharpLoss(torch.nn.MSELoss):
+    def __init__(self, max_sharpness=None, reduction='mean'):
+        super(SharpLoss, self).__init__(reduction=reduction)
+
+    def forward(self, teacher_logits, student_logits):
+        teacher_sharpness = sharpness_torch(teacher_logits)
+        student_sharpness = sharpness_torch(student_logits)
+        return super(SharpLoss, self).forward(student_sharpness, teacher_sharpness)

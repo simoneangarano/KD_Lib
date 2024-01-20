@@ -19,4 +19,5 @@ from .vision import (
     VanillaKD,
     FNKD,
     VirtualTeacher,
+    TriKD,
 )

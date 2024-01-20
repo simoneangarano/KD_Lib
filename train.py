@@ -4,9 +4,9 @@ import torch
 from KD_Lib.models import model_dict
 from KD_Lib.models.resnet_torch import get_ResNet, monkey_patch
 from KD_Lib.models.shake import ShakeHead
-from KD_Lib.KD import VanillaKD, DML, Shake, Smooth, FNKD
+from KD_Lib.KD import VanillaKD, DML, Shake, Smooth, FNKD, TriKD
 from KD_Lib.datasets import get_dataset, get_cifar100_dataloaders
-from KD_Lib.utils import get_optim_sched, log_cfg
+from KD_Lib.utils import get_optim_sched, log_cfg, SharpLoss
 # os.environ["CUDA_VISIBLE_DEVICES"] = '5'
 
 # Hyperparameters
@@ -17,13 +17,13 @@ class Cfg:
                 setattr(self, key, dict[key])
             return
         
-        self.MODE: str = 'smooth' # 'kd' or 'dml' or 'shake' or 'smooth' or 'fnkd' or 'baseline' or 'ftkd'
+        self.MODE: str = 'smooth' # 'kd' or 'dml' or 'shake' or 'smooth' or 'fnkd' or 'baseline' or 'ftkd' or 'trikd'
         self.DATASET: str = 'cifar100' # 'cifar10' or 'cifar100'
-        self.EXP: str = f"{self.MODE}_{self.DATASET}_fn"
+        self.EXP: str = f"{self.MODE}_{self.DATASET}_noT"
 
-        self.T: float = 1.0 if self.MODE in [] else 4.0
-        self.W: float = 0.9 if self.MODE == 'kd' else 1.0 if self.MODE == 'fnkd' else 1.0
-        self.FEAT_NORM: bool = True if self.MODE in ['fnkd','smooth'] else False
+        self.T: float = 1.0 if self.MODE in ['trikd', 'smooth'] else 4.0
+        self.W: float = 0.9 if self.MODE == 'kd' else 9.0 if self.MODE in ['fnkd'] else 1.0
+        self.FEAT_NORM: bool = True if self.MODE in ['fnkd'] else False
 
         self.IMSIZE: int = 32 if 'cifar' in self.DATASET else 227
         self.CLASSES: int = 0
@@ -34,7 +34,7 @@ class Cfg:
         self.STUDENT: str = 'resnet20'
         self.CUSTOM_MODEL: bool = True
         self.LAYER_NORM: bool = False
-        self.LR: float = 0.05
+        self.LR: float = 0.1 if self.MODE in ['trikd'] else 0.05
         self.LR_MIN: float = 5e-5
         self.MOMENTUM: float = 0.9
         self.WD: float = 5e-4
@@ -42,7 +42,8 @@ class Cfg:
         self.SCHEDULER: str = 'step' # 'cos' or 'step' or 'lin'
         self.STEPS: list = [150, 180, 210]
         self.GAMMA: float = 0.1
-        self.TEACHER_WEIGHTS: str = f'./models/teacher_{self.DATASET}_kd.pt'
+        self.TEACHER_WEIGHTS: str = f'./models/{self.TEACHER}_{self.DATASET}.pt'
+        self.STUDENT_WEIGHTS: str = f'./models/{self.STUDENT}_{self.DATASET}.pt'
         self.PARALLEL: bool = False
         self.LOG: bool = True
         self.LOG_DIR: str = f"./exp/"
@@ -134,17 +135,46 @@ def main():
         optim_sched = get_optim_sched(models[1:], cfg, single=True)
         optimizers[1], schedulers[1] = optim_sched['optims'], optim_sched['scheds']
 
+        losses.append(SharpLoss())
+
         distiller = Smooth(models, loaders, optimizers, schedulers, losses, cfg)
 
         if not os.path.exists(cfg.TEACHER_WEIGHTS):
             distiller.train_teacher()
         else:
             distiller.models[0].load_state_dict(torch.load(cfg.TEACHER_WEIGHTS))
-        # distiller.models[1].weight.data = list(distiller.models[0].modules())[-1].weight.data.clone()
-        # distiller.models[1].bias.data = list(distiller.models[0].modules())[-1].bias.data.clone()
+        distiller.models[1].weight.data = list(distiller.models[0].modules())[-1].weight.data.clone()
+        distiller.models[1].bias.data = list(distiller.models[0].modules())[-1].bias.data.clone()
 
         t_val, _ = distiller.evaluate(teacher=True)
         print(f"Teacher Accuracy: {t_val:.4f}%")
+
+        distiller.train_student()
+        distiller.evaluate(verbose=True)
+
+    elif cfg.MODE == 'trikd': # TriKD
+        smooth = torch.nn.Linear(64, cfg.CLASSES).to(cfg.DEVICE)
+        models.insert(1, smooth)
+
+        anchor = model_dict[cfg.STUDENT](num_classes=cfg.CLASSES)
+        anchor = monkey_patch(anchor, custom=cfg.CUSTOM_MODEL).to(cfg.DEVICE)
+        anchor.load_state_dict(torch.load(cfg.STUDENT_WEIGHTS))
+        models.insert(0, anchor)
+
+        optim_sched = get_optim_sched(models[2:], cfg, single=True)
+        optimizers[1], schedulers[1] = optim_sched['optims'], optim_sched['scheds']
+
+        distiller = TriKD(models, loaders, optimizers, schedulers, losses, cfg)
+
+        if not os.path.exists(cfg.TEACHER_WEIGHTS):
+            distiller.train_teacher()
+        else:
+            distiller.models[1].load_state_dict(torch.load(cfg.TEACHER_WEIGHTS))
+        
+        t_val, _ = distiller.evaluate(teacher=True)
+        print(f"Teacher Accuracy: {t_val:.4f}%")
+        a_val, _ = distiller.evaluate(anchor=True)
+        print(f"Anchor Accuracy: {a_val:.4f}%")
 
         distiller.train_student()
         distiller.evaluate(verbose=True)
