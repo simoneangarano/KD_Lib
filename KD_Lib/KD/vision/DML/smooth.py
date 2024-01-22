@@ -1,6 +1,7 @@
 import time
 from copy import deepcopy
 
+import optuna
 import torch
 import torch.nn.functional as F
 from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap, log_cfg
@@ -14,24 +15,30 @@ class Smooth(Shake):
         optimizers,
         schedulers,
         losses,
-        cfg
+        cfg,
+        logger=None,
+        trial=None
     ):
         super().__init__(models, loaders, optimizers, schedulers, losses, cfg)
-    
+        self.logger = logger
+        self.trial = trial
+
     def train_student(self, save_model=True):
 
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
         s_sharp_train, t_sharp_train, g_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
+        epoch_kld = AverageMeter()
         self.best_student_model_weights = deepcopy(self.models[-1].state_dict())
         self.best_student = self.models[-1]
 
-        print("Training Teacher and Student...")
+        self.logger.save_log("Training Teacher and Student...")
         self.cfg.TIME = time.time()
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
             s_sharp_train.reset(), t_sharp_train.reset(), g_sharp_train.reset()
+            epoch_kld.reset()
             t_correct, s_correct = 0, 0
             self.set_models(mode='train_student')
             
@@ -49,10 +56,9 @@ class Smooth(Shake):
                     feat_t = [f.detach() for f in feat_t]
 
                 if isinstance(logit_t, tuple):
-                    logit_t_orig, logit_t = logit_t
+                    _, logit_t = logit_t
                     logit_s_orig, logit_s = logit_s
                 else:
-                    logit_t_orig = logit_t
                     logit_s_orig = logit_s
 
                 pred_feat_s = self.models[1](feat_t[-1]) # Feature selection
@@ -62,20 +68,21 @@ class Smooth(Shake):
                 # classification loss student
                 loss_cls = self.loss_ce(logit_s, label)
                 # distillation loss student <-> smooth head
-                A = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(pred_feat_s/self.cfg.T, dim=1), 
+                La = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(pred_feat_s/self.cfg.T, dim=1), 
                                                            F.log_softmax(logit_s.detach()/self.cfg.T, dim=1))
-                B = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
+                Lb = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
                                                            F.log_softmax(pred_feat_s.detach()/self.cfg.T, dim=1))
                 # classification loss smooth head
-                C = self.loss_ce(pred_feat_s, label)
+                Lc = self.loss_ce(pred_feat_s, label)
                 # distillation loss smooth head <-> teacher
-                D = F.mse_loss(pred_feat_s, logit_t.detach())
+                Ld = F.mse_loss(pred_feat_s, logit_t.detach())
                 # distillation loss student <-> teacher
-                # E = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
-                #                                            F.log_softmax(logit_t.detach()/self.cfg.T, dim=1))
+                Le = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
+                                                            F.log_softmax(logit_t.detach()/self.cfg.T, dim=1))
                 # sharpness loss
-                # G = self.loss_sharp(pred_feat_s, logit_s.detach())
-                loss_kd = A + B + C + D # + G # + E
+                Lf = self.loss_sharp(pred_feat_s, logit_s.detach())
+
+                loss_kd = self.cfg.L[0]*La + self.cfg.L[0]*Lb + self.cfg.L[0]*Lc + self.cfg.L[0]*Ld + self.cfg.L[0]*Le + self.cfg.L[0]*Lf
                 loss = loss_cls + self.cfg.W * loss_kd
                 loss.backward()
                 self.optimizers[-1].step()
@@ -83,7 +90,9 @@ class Smooth(Shake):
                 g_sharp, t_sharp, s_sharp = sharpness_gap(pred_feat_s, logit_s_orig)
                 s_sharp_train.update(s_sharp), t_sharp_train.update(t_sharp), g_sharp_train.update(g_sharp)
                 epoch_loss.update(loss.item()), epoch_ce_loss.update(loss_cls.item()), epoch_kd_loss.update(loss_kd.item())
-
+                kld = F.kl_div(F.log_softmax(logit_s.detach(), dim=1), F.log_softmax(pred_feat_s.detach(), dim=1),
+                               log_target=True, reduction='batchmean')
+                epoch_kld.update(kld)
                 predictions = []
                 correct_preds = []
                 predictions.append(pred_feat_s.argmax(dim=1, keepdim=True))
@@ -119,13 +128,20 @@ class Smooth(Shake):
                 self.writer.add_scalar("Sharpness Teacher Val", t_sharp_val, ep)
                 self.writer.add_scalar("Sharpness Gap Train", g_sharp_train.avg, ep)
                 self.writer.add_scalar("Sharpness Gap Val", g_sharp_val, ep)
+                self.writer.add_scalar("KL Divergence", epoch_kld.avg, ep)
                 log_cfg(self.cfg)
 
-            print(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[-1].get_last_lr()[0]:.1e},",
-                  f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}",
-                  f"\n[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
-            print("-" * 100)
+            out = f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[-1].get_last_lr()[0]:.1e},"
+            out += f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}"
+            out += f"\n[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}"
+            self.logger.save_log(out)
+            self.logger.save_log("-" * 100)
             self.schedulers[-1].step()
+
+            if self.trial is not None:
+                self.trial.report(val_accs[-1], ep)
+                if self.trial.should_prune():
+                    raise optuna.TrialPruned()
 
         self.cfg.TIME = (time.time() - self.cfg.TIME) / 60.0
         self.best_student.load_state_dict(self.best_student_model_weights)

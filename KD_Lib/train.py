@@ -1,5 +1,4 @@
-import os
-from pprint import pformat
+import os, pprint
 import torch
 from KD_Lib.models import model_dict
 from KD_Lib.models.resnet_torch import get_ResNet, monkey_patch
@@ -7,60 +6,9 @@ from KD_Lib.models.shake import ShakeHead
 from KD_Lib.KD import VanillaKD, DML, Shake, Smooth, FNKD, TriKD
 from KD_Lib.datasets import get_dataset, get_cifar100_dataloaders
 from KD_Lib.utils import get_optim_sched, log_cfg, SharpLoss
-# os.environ["CUDA_VISIBLE_DEVICES"] = '5'
 
-# Hyperparameters
-class Cfg:
-    def __init__(self, dict=None):
-        if dict is not None:
-            for key in dict:
-                setattr(self, key, dict[key])
-            return
-        
-        self.MODE: str = 'smooth' # 'kd' or 'dml' or 'shake' or 'smooth' or 'fnkd' or 'baseline' or 'ftkd' or 'trikd'
-        self.DATASET: str = 'cifar100' # 'cifar10' or 'cifar100'
-        self.EXP: str = f"{self.MODE}_{self.DATASET}_noT"
-
-        self.T: float = 1.0 if self.MODE in ['trikd', 'smooth'] else 4.0
-        self.W: float = 0.9 if self.MODE == 'kd' else 9.0 if self.MODE in ['fnkd'] else 1.0
-        self.FEAT_NORM: bool = True if self.MODE in ['fnkd'] else False
-
-        self.IMSIZE: int = 32 if 'cifar' in self.DATASET else 227
-        self.CLASSES: int = 0
-        self.DATA_PATH: str = '../Knowledge-Distillation-Zoo/datasets/'
-        self.BATCH_SIZE: int = 64
-        self.WORKERS: int = 8
-        self.TEACHER: str = 'resnet110' 
-        self.STUDENT: str = 'resnet20'
-        self.CUSTOM_MODEL: bool = True
-        self.LAYER_NORM: bool = False
-        self.LR: float = 0.1 if self.MODE in ['trikd'] else 0.05
-        self.LR_MIN: float = 5e-5
-        self.MOMENTUM: float = 0.9
-        self.WD: float = 5e-4
-        self.EPOCHS: int = 240
-        self.SCHEDULER: str = 'step' # 'cos' or 'step' or 'lin'
-        self.STEPS: list = [150, 180, 210]
-        self.GAMMA: float = 0.1
-        self.TEACHER_WEIGHTS: str = f'./models/{self.TEACHER}_{self.DATASET}.pt'
-        self.STUDENT_WEIGHTS: str = f'./models/{self.STUDENT}_{self.DATASET}.pt'
-        self.PARALLEL: bool = False
-        self.LOG: bool = True
-        self.LOG_DIR: str = f"./exp/"
-        self.TB_DIR: str = f"./tb/{self.EXP}/"
-        self.SAVE_PATH: str = f"./models/{self.EXP}.pt"
-        self.DEVICE: str = 'cuda'
-        self.TIME: float = 0.0
-        self.VACC: dict = {
-            'T_LAST': 0.0,
-            'T_BEST': 0.0,
-            'S_LAST': 0.0,
-            'S_BEST': 0.0
-        }
-
-def main():
-    cfg = Cfg()
-    print(pformat(cfg.__dict__))
+def train(cfg, logger=None, trial=None):
+    logger.save_log(pprint.pformat(cfg.__dict__))
 
     # Dataset
     if cfg.DATASET == 'cifar100':
@@ -83,8 +31,8 @@ def main():
     optimizers, schedulers = optim_sched['optims'], optim_sched['scheds']
 
     # Losses()
-    losses = [torch.nn.CrossEntropyLoss(reduction='mean').to(cfg.DEVICE), ######################################
-              torch.nn.KLDivLoss(reduction='batchmean', log_target=True).to(cfg.DEVICE)] ####################### 
+    losses = [torch.nn.CrossEntropyLoss(reduction='mean').to(cfg.DEVICE),
+              torch.nn.KLDivLoss(reduction='batchmean', log_target=True).to(cfg.DEVICE)] 
 
     # Training
     if cfg.MODE == 'kd': # Vanilla KD
@@ -123,7 +71,7 @@ def main():
         else:
             distiller.models[0].load_state_dict(torch.load(cfg.TEACHER_WEIGHTS))
         t_val, _ = distiller.evaluate(teacher=True)
-        print(f"Teacher Accuracy: {t_val:.4f}%")
+        logger.save_log(f"Teacher Accuracy: {t_val:.4f}%")
 
         distiller.train_student()
         distiller.evaluate(verbose=True)
@@ -137,17 +85,18 @@ def main():
 
         losses.append(SharpLoss())
 
-        distiller = Smooth(models, loaders, optimizers, schedulers, losses, cfg)
+        distiller = Smooth(models, loaders, optimizers, schedulers, losses, cfg, logger, trial)
 
         if not os.path.exists(cfg.TEACHER_WEIGHTS):
             distiller.train_teacher()
         else:
             distiller.models[0].load_state_dict(torch.load(cfg.TEACHER_WEIGHTS))
-        distiller.models[1].weight.data = list(distiller.models[0].modules())[-1].weight.data.clone()
-        distiller.models[1].bias.data = list(distiller.models[0].modules())[-1].bias.data.clone()
+        if cfg.PRETRAINED_HEAD:
+            distiller.models[1].weight.data = list(distiller.models[0].modules())[-1].weight.data.clone()
+            distiller.models[1].bias.data = list(distiller.models[0].modules())[-1].bias.data.clone()
 
         t_val, _ = distiller.evaluate(teacher=True)
-        print(f"Teacher Accuracy: {t_val:.4f}%")
+        logger.save_log(f"Teacher Accuracy: {t_val:.4f}%")
 
         distiller.train_student()
         distiller.evaluate(verbose=True)
@@ -172,14 +121,14 @@ def main():
             distiller.models[1].load_state_dict(torch.load(cfg.TEACHER_WEIGHTS))
         
         t_val, _ = distiller.evaluate(teacher=True)
-        print(f"Teacher Accuracy: {t_val:.4f}%")
+        logger.save_log(f"Teacher Accuracy: {t_val:.4f}%")
         a_val, _ = distiller.evaluate(anchor=True)
-        print(f"Anchor Accuracy: {a_val:.4f}%")
+        logger.save_log(f"Anchor Accuracy: {a_val:.4f}%")
 
         distiller.train_student()
         distiller.evaluate(verbose=True)
 
-    else: # Baseline
+    elif cfg.MODE == 'baseline': # Baseline
         distiller = VanillaKD(models, loaders, optimizers, schedulers, losses, cfg)
         if not os.path.exists(cfg.TEACHER_WEIGHTS):
             distiller.train_teacher()
@@ -187,8 +136,9 @@ def main():
             distiller.teacher_model.load_state_dict(torch.load(cfg.TEACHER_WEIGHTS))        
         distiller.evaluate(teacher=True, verbose=True) # Evaluate the student network
 
+    else: # Error
+        raise NotImplementedError(f"{cfg.MODE} is not implemented!")
+    
     # Save config
     log_cfg(distiller.cfg)
-
-if __name__ == "__main__":
-    main()
+    return cfg.VACC['S_BEST']

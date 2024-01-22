@@ -30,7 +30,8 @@ class DML:
                                                              "Accuracy Student Val", "Accuracy Teacher Val"]],
                                   "Sharpness": ["Multiline", ["Sharpness Teacher Train", "Sharpness Student Train",
                                                               "Sharpness Student Val", "Sharpness Teacher Val"]],
-                                  "Sharpness Gap": ["Multiline", ["Sharpness Gap Train", "Sharpness Gap Val"]]}}
+                                  "Sharpness Gap": ["Multiline", ["Sharpness Gap Train", "Sharpness Gap Val"]],
+                                  "KL Divergence": ["Multiline", ["KL Divergence"]]}}
             self.writer.add_custom_scalars(layout)
 
     def train_student(self, save_model=True, stud_teach_kd=True):
@@ -38,6 +39,7 @@ class DML:
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
         s_sharp_train, t_sharp_train, g_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
+        epoch_kld = AverageMeter()
         self.best_student_model_weights = deepcopy(self.models[-1].state_dict())
         self.best_student = self.models[-1]
 
@@ -47,6 +49,7 @@ class DML:
             t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset() 
             s_sharp_train.reset(), t_sharp_train.reset(), g_sharp_train.reset()
+            epoch_kld.reset()
             t_correct, s_correct = 0, 0
             self.set_models(mode='train')
 
@@ -80,6 +83,9 @@ class DML:
                 g_sharp, t_sharp, s_sharp = sharpness_gap(out_j, out_i) # j is teacher, i is student
                 s_sharp_train.update(s_sharp), t_sharp_train.update(t_sharp), g_sharp_train.update(g_sharp)
                 epoch_loss.update(student_loss.item()), epoch_ce_loss.update(loss_ce.item()), epoch_kd_loss.update(loss_kd.item())
+                kld = F.kl_div(F.log_softmax(out_i.detach(), dim=1), F.log_softmax(out_j.detach(), dim=1),
+                               log_target=True, reduction='batchmean')
+                epoch_kld.update(kld)
 
                 predictions = []
                 correct_preds = []
@@ -116,6 +122,7 @@ class DML:
                 self.writer.add_scalar("Sharpness Teacher Val", t_sharp_val, ep)
                 self.writer.add_scalar("Sharpness Gap Train", g_sharp_train.avg, ep)
                 self.writer.add_scalar("Sharpness Gap Val", g_sharp_val, ep)
+                self.writer.add_scalar("KL Divergence", epoch_kld.avg, ep)
                 log_cfg(self.cfg)
 
             print(f"[{ep+1}: {(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e},",

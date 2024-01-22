@@ -113,3 +113,4 @@ cifar_data
 .github/*
 models/*
 tb/
+hp_search/

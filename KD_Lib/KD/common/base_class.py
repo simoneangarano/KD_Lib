@@ -2,6 +2,7 @@ import os, time
 from copy import deepcopy
 
 import torch
+import torch.nn.functional as F
 from torch.utils.tensorboard import SummaryWriter
 from KD_Lib.utils import sharpness, sharpness_gap, AverageMeter, log_cfg
 
@@ -35,7 +36,8 @@ class BaseClass:
                                                              "Accuracy Student Val", "Accuracy Teacher Val"]],
                                   "Sharpness": ["Multiline", ["Sharpness Teacher Train", "Sharpness Student Train",
                                                               "Sharpness Student Val", "Sharpness Teacher Val"]],
-                                  "Sharpness Gap": ["Multiline", ["Sharpness Gap Train", "Sharpness Gap Val"]]}}
+                                  "Sharpness Gap": ["Multiline", ["Sharpness Gap Train", "Sharpness Gap Val"]],
+                                  "KL Divergence": ["Multiline", ["KL Divergence"]]}}
             self.writer.add_custom_scalars(layout)
 
     def train_teacher(self, save_model=True):
@@ -107,6 +109,7 @@ class BaseClass:
         length_of_dataset = len(self.train_loader.dataset)
         epoch_loss, epoch_ce_loss, epoch_kd_loss = AverageMeter(), AverageMeter(), AverageMeter()
         g_sharp_train, t_sharp_train, s_sharp_train = AverageMeter(), AverageMeter(), AverageMeter()
+        epoch_kld = AverageMeter()
         self.best_student_model_weights = deepcopy(self.student_model.state_dict())
 
         save_dir = os.path.dirname(self.cfg.SAVE_PATH)
@@ -118,6 +121,7 @@ class BaseClass:
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
             epoch_loss.reset(), epoch_ce_loss.reset(), epoch_kd_loss.reset()
+            epoch_kld.reset()
             correct = 0
             self.set_models(mode='train_student')
 
@@ -140,6 +144,9 @@ class BaseClass:
                 g_sharp_train.update(g_sharp)
                 t_sharp_train.update(t_sharp)
                 s_sharp_train.update(s_sharp)
+                kld = F.kl_div(F.log_softmax(student_out.detach(), dim=1), F.log_softmax(teacher_out.detach(), dim=1),
+                               log_target=True, reduction='batchmean')
+                epoch_kld.update(kld)
 
                 loss.backward()
                 self.optimizer_student.step()
@@ -173,6 +180,7 @@ class BaseClass:
                 self.writer.add_scalar("Sharpness Gap Train", g_sharp_train.avg, ep)
                 self.writer.add_scalar("Sharpness Teacher Val", t_sharp_val, ep)
                 self.writer.add_scalar("Sharpness Gap Val", t_sharp_val - s_sharp_val, ep)
+                self.writer.add_scalar("KL Divergence", epoch_kld.avg, ep)
                 log_cfg(self.cfg)
 
             print(
