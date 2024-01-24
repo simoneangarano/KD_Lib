@@ -82,7 +82,6 @@ def train(cfg, logger=None, trial=None):
 
         optim_sched = get_optim_sched(models[1:], cfg, single=True)
         optimizers[1], schedulers[1] = optim_sched['optims'], optim_sched['scheds']
-
         losses.append(SharpLoss())
 
         distiller = Smooth(models, loaders, optimizers, schedulers, losses, cfg, logger, trial)

@@ -1,6 +1,9 @@
-import os, json, pprint
+import os, json, pprint, typing
 import numpy as np
+import optuna
 import torch
+import torch.nn.functional as F
+
 
 # Get Optimizer and Scheduler
 def get_optim_sched(models: list, cfg, single=False):
@@ -31,7 +34,6 @@ def get_single_opt_sched(params, cfg):
     return opt, sched
 
 
-
 # Utils
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -50,12 +52,6 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
-def log_cfg(cfg):
-    if not os.path.exists(cfg.LOG_DIR):
-        os.makedirs(cfg.LOG_DIR)
-    with open(f"{cfg.LOG_DIR}{cfg.EXP}.json", "w") as file:
-        json.dump(cfg.__dict__, file)
-
 class Logger(object):
     def __init__(self, file):
         self.file = file
@@ -68,7 +64,38 @@ class Logger(object):
         with open(self.file, 'a') as f:
             f.write(text + '\n')
 
+class MultiPruner(optuna.pruners.BasePruner):
+    def __init__(self, pruners: typing.Iterable[optuna.pruners.BasePruner], pruning_condition: str = "any") -> None:
+        self._pruners = tuple(pruners)
+        self._pruning_condition_check_fn = None
+        if pruning_condition == "any":
+            self._pruning_condition_check_fn = any
+        elif pruning_condition == "all":
+            self._pruning_condition_check_fn = all
+        else:
+            raise ValueError(f"Invalid pruning ({pruning_condition}) condition passed!")
+        assert self._pruning_condition_check_fn is not None
+
+    def prune(self, study: optuna.study.Study, trial: optuna.trial.FrozenTrial) -> bool:
+         return self._pruning_condition_check_fn(pruner.prune(study, trial) for pruner in self._pruners)
+
+def log_cfg(cfg):
+    if not os.path.exists(cfg.LOG_DIR):
+        os.makedirs(cfg.LOG_DIR)
+    with open(f"{cfg.LOG_DIR}{cfg.EXP}.json", "w") as file:
+        json.dump(cfg.__dict__, file)
+
+
 # Sharpness Metric and Loss
+class SharpLoss(torch.nn.MSELoss):
+    def __init__(self, max_sharpness=None, reduction='mean'):
+        super(SharpLoss, self).__init__(reduction=reduction)
+
+    def forward(self, teacher_logits, student_logits):
+        teacher_sharpness = sharpness_torch(teacher_logits)
+        student_sharpness = sharpness_torch(student_logits)
+        return super(SharpLoss, self).forward(student_sharpness, teacher_sharpness)
+    
 def sharpness(logits, eps=1e-9, clip=70):
     """Computes the sharpness of the logits.
     Args:
@@ -108,16 +135,34 @@ def sharpness_torch(logits):
     logits = torch.exp(logits).sum(dim=1).log()
     return logits
 
-class SharpLoss(torch.nn.MSELoss):
-    def __init__(self, max_sharpness=None, reduction='mean'):
-        super(SharpLoss, self).__init__(reduction=reduction)
+def kl_loss_compute(pred, soft_targets, reduction='none'):
+    kl = F.kl_div(F.log_softmax(pred, dim=1),F.softmax(soft_targets, dim=1),reduction='none')
+    if reduction:
+        return torch.mean(torch.sum(kl, dim=1))
+    else:
+        return torch.sum(kl, 1)
 
-    def forward(self, teacher_logits, student_logits):
-        teacher_sharpness = sharpness_torch(teacher_logits)
-        student_sharpness = sharpness_torch(student_logits)
-        return super(SharpLoss, self).forward(student_sharpness, teacher_sharpness)
-    
+class JocorLoss(torch.nn.Module):
+    def __init__(self, cfg):
+        super(JocorLoss, self).__init__()
+        self.co_lambda = cfg.CO_LAMBDA
+        self.forget_scheduler = np.ones(cfg.EPOCHS) * cfg.FORGET_RATE
+        self.forget_scheduler[:cfg.GRADUAL] = np.linspace(0, cfg.FORGET_RATE**cfg.EXPONENT, cfg.GRADUAL)
 
+    def forward(self, y_s, y_t, y, epoch):
+        ce_s = F.cross_entropy(y_s, y, reduction='none')
+        ce_t = F.cross_entropy(y_t, y, reduction='none')
+        kl_s = kl_loss_compute(y_s, y_t.detach(), reduction='none')
+        kl_t = kl_loss_compute(y_t, y_s.detach(), reduction='none')
+        loss = ((1-self.co_lambda) * (ce_s+ce_t) + self.co_lambda * (kl_s+kl_t)).cpu()
+
+        ind_sorted = np.argsort(loss.data)
+        loss_sorted = loss[ind_sorted]
+        remember_rate = 1 - self.forget_scheduler[epoch]
+        num_remember = int(remember_rate * len(loss_sorted))
+        ind_update = ind_sorted[:num_remember]
+        loss = torch.mean(loss[ind_update])
+        return loss
 
 # CKA: Similarity of Neural Network Representations Revisited
 def gram_linear(x):

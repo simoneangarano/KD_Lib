@@ -3,6 +3,7 @@ import joblib
 import optuna
 
 from KD_Lib.train import train
+from KD_Lib.utils import MultiPruner
 
 
 class HPSearcher:
@@ -13,30 +14,21 @@ class HPSearcher:
         self.name = name
         self.logger = logger
         self.trial = trial
-        
-        self.search_space = {"La": [1], # KLDiv Ts->S
-                             "Lb": [1], # KLDiv S->Ts
-                             "Lc": [0], # CE Ts [0, 0.1, 0.5, 1]
-                             "Ld": [0, 0.1, 1], # MSE Ts->T
-                             "Le": [0, 0.1, 0.5, 1], # KLDiv S->T
-                             "Lf": [0], # SharpLoss
-                             "T": [4], # Temperature
-                             "W": [1], # KD
-                            }
-    
+            
     def get_random_hps(self):
-        self.cfg.T = self.trial.suggest_categorical("T", self.search_space["T"])
-        self.cfg.W = self.trial.suggest_categorical("W", self.search_space["W"])
-        self.cfg.L = [self.trial.suggest_categorical("La", self.search_space["La"]),
-                      self.trial.suggest_categorical("Lb", self.search_space["Lb"]),
-                      self.trial.suggest_categorical("Lc", self.search_space["Lc"]),
-                      self.trial.suggest_categorical("Ld", self.search_space["Ld"]),
-                      self.trial.suggest_categorical("Le", self.search_space["Le"]),
-                      self.trial.suggest_categorical("Lf", self.search_space["Lf"])]
+        self.cfg.T = self.trial.suggest_categorical("T", self.cfg.SEARCH_SPACE["T"])
+        self.cfg.W = self.trial.suggest_categorical("W", self.cfg.SEARCH_SPACE["W"])
+        self.cfg.L = [self.trial.suggest_categorical("La", self.cfg.SEARCH_SPACE["La"]),
+                      self.trial.suggest_categorical("Lb", self.cfg.SEARCH_SPACE["Lb"]),
+                      self.trial.suggest_categorical("Lc", self.cfg.SEARCH_SPACE["Lc"]),
+                      self.trial.suggest_categorical("Ld", self.cfg.SEARCH_SPACE["Ld"]),
+                      self.trial.suggest_categorical("Le", self.cfg.SEARCH_SPACE["Le"]),
+                      self.trial.suggest_categorical("Lf", self.cfg.SEARCH_SPACE["Lf"])]
         print(f"T={self.cfg.T}, W={self.cfg.W}, L={self.cfg.L}")
     
     def objective(self, trial):
         self.cfg.EXP = f"{self.name}_{trial.number}"
+        self.cfg.reset()
         self.trial = trial 
         self.get_random_hps()
 
@@ -47,8 +39,8 @@ class HPSearcher:
     def hp_search(self):
         self.study = optuna.create_study(study_name=self.name,
                                          direction='maximize', 
-                                         sampler=optuna.samplers.GridSampler(self.search_space),
-                                         pruner=optuna.pruners.HyperbandPruner())
+                                         sampler=optuna.samplers.GridSampler(self.cfg.SEARCH_SPACE),
+                                         pruner=MultiPruner((optuna.pruners.ThresholdPruner(lower=0.02), optuna.pruners.HyperbandPruner())))
         
         if os.path.exists(f'{self.cfg.HP_SEARCH_DIR}/{self.name}.pkl'):
             study_old = joblib.load(f'{self.cfg.HP_SEARCH_DIR}/{self.name}.pkl')

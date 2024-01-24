@@ -114,3 +114,5 @@ cifar_data
 models/*
 tb/
 hp_search/
+hp_search*.txt
+hp_search*.json
