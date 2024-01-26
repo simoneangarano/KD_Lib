@@ -162,7 +162,8 @@ class Shake(DML):
         Evaluate method for printing accuracies of the trained student networks
 
         """        
-        models = [deepcopy(m).eval().to(self.device) for m in self.models]
+        models = [deepcopy(m).to(self.device) for m in self.models]
+        [m.eval() for m in models]
         if teacher:
             _, val_acc_t, sharp_t = self._evaluate_model(models[:1])
             return val_acc_t, sharp_t

@@ -29,6 +29,7 @@ class HPSearcher:
     def objective(self, trial):
         self.cfg.EXP = f"{self.name}_{trial.number}"
         self.cfg.reset()
+        trial.set_user_attr('name', self.cfg.EXP)
         self.trial = trial 
         self.get_random_hps()
 

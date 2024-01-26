@@ -4,7 +4,8 @@ from copy import deepcopy
 import optuna
 import torch
 import torch.nn.functional as F
-from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap, log_cfg, JocorLoss
+from KD_Lib.KD.common.loss import SmoothLoss
+from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap, log_cfg
 from KD_Lib.KD.vision.DML.shake import Shake
 
 class Smooth(Shake):
@@ -20,7 +21,7 @@ class Smooth(Shake):
         trial=None
     ):
         super().__init__(models, loaders, optimizers, schedulers, losses, cfg)
-        self.loss_jocor = JocorLoss(self.cfg)
+        self.loss_smooth = SmoothLoss(self.cfg).to(self.device)
         self.logger = logger
         self.trial = trial
 
@@ -67,33 +68,8 @@ class Smooth(Shake):
                 logit_t = self.norm(logit_t)
                 pred_feat_s = self.norm(pred_feat_s)
                
-                if self.cfg.JOCOR:
-                    # jocor loss
-                    Lj = self.loss_jocor(logit_s, pred_feat_s, label, ep)
-                    loss = Lj
-                    epoch_loss.update(loss.item()), epoch_kd_loss.update(loss.item())
-
-                else:
-                    # classification loss student
-                    loss_cls = self.loss_ce(logit_s, label)
-                    # distillation loss student <-> smooth head
-                    La = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(pred_feat_s/self.cfg.T, dim=1), 
-                                                            F.log_softmax(logit_s.detach()/self.cfg.T, dim=1))
-                    Lb = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
-                                                            F.log_softmax(pred_feat_s.detach()/self.cfg.T, dim=1))
-                    # classification loss smooth head
-                    Lc = self.loss_ce(pred_feat_s, label)
-                    # distillation loss smooth head <-> teacher
-                    Ld = F.mse_loss(pred_feat_s, logit_t.detach())
-                    # distillation loss student <-> teacher
-                    Le = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
-                                                                F.log_softmax(logit_t.detach()/self.cfg.T, dim=1))
-                    # sharpness loss
-                    Lf = self.loss_sharp(pred_feat_s, logit_s.detach())
-
-                    loss_kd = self.cfg.L[0]*La + self.cfg.L[1]*Lb + self.cfg.L[2]*Lc + self.cfg.L[3]*Ld + self.cfg.L[4]*Le + self.cfg.L[5]*Lf
-                    loss = loss_cls + self.cfg.W * loss_kd
-                    epoch_loss.update(loss.item()), epoch_ce_loss.update(loss_cls.item()), epoch_kd_loss.update(loss_kd.item())
+                loss, loss_cls, loss_kd = self.loss_smooth(logit_s, logit_t, pred_feat_s, label, ep)
+                epoch_loss.update(loss.item()), epoch_ce_loss.update(loss_cls.item()), epoch_kd_loss.update(loss_kd.item())
 
                 loss.backward()
                 self.optimizers[-1].step()

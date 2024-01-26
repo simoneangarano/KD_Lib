@@ -2,8 +2,6 @@ import os, json, pprint, typing
 import numpy as np
 import optuna
 import torch
-import torch.nn.functional as F
-
 
 # Get Optimizer and Scheduler
 def get_optim_sched(models: list, cfg, single=False):
@@ -86,16 +84,7 @@ def log_cfg(cfg):
         json.dump(cfg.__dict__, file)
 
 
-# Sharpness Metric and Loss
-class SharpLoss(torch.nn.MSELoss):
-    def __init__(self, max_sharpness=None, reduction='mean'):
-        super(SharpLoss, self).__init__(reduction=reduction)
-
-    def forward(self, teacher_logits, student_logits):
-        teacher_sharpness = sharpness_torch(teacher_logits)
-        student_sharpness = sharpness_torch(student_logits)
-        return super(SharpLoss, self).forward(student_sharpness, teacher_sharpness)
-    
+# Sharpness Metric
 def sharpness(logits, eps=1e-9, clip=70):
     """Computes the sharpness of the logits.
     Args:
@@ -123,48 +112,9 @@ def sharpness_gap(teacher_logits, student_logits, eps=1e-9):
     teacher_sharpness = sharpness(teacher_logits, eps)
     student_sharpness = sharpness(student_logits, eps)
     return teacher_sharpness - student_sharpness, teacher_sharpness, student_sharpness
- 
-def sharpness_torch(logits):
-    """Computes the sharpness of the logits.
-    Args:
-        logits: Tensor of shape [batch_size, num_classes] containing the logits.
-        eps: Small epsilon to avoid numerical issues.
-    Returns:
-        The sharpness of the logits.
-    """
-    logits = torch.exp(logits).sum(dim=1).log()
-    return logits
 
-def kl_loss_compute(pred, soft_targets, reduction='none'):
-    kl = F.kl_div(F.log_softmax(pred, dim=1),F.softmax(soft_targets, dim=1),reduction='none')
-    if reduction:
-        return torch.mean(torch.sum(kl, dim=1))
-    else:
-        return torch.sum(kl, 1)
 
-class JocorLoss(torch.nn.Module):
-    def __init__(self, cfg):
-        super(JocorLoss, self).__init__()
-        self.co_lambda = cfg.CO_LAMBDA
-        self.forget_scheduler = np.ones(cfg.EPOCHS) * cfg.FORGET_RATE
-        self.forget_scheduler[:cfg.GRADUAL] = np.linspace(0, cfg.FORGET_RATE**cfg.EXPONENT, cfg.GRADUAL)
-
-    def forward(self, y_s, y_t, y, epoch):
-        ce_s = F.cross_entropy(y_s, y, reduction='none')
-        ce_t = F.cross_entropy(y_t, y, reduction='none')
-        kl_s = kl_loss_compute(y_s, y_t.detach(), reduction='none')
-        kl_t = kl_loss_compute(y_t, y_s.detach(), reduction='none')
-        loss = ((1-self.co_lambda) * (ce_s+ce_t) + self.co_lambda * (kl_s+kl_t)).cpu()
-
-        ind_sorted = np.argsort(loss.data)
-        loss_sorted = loss[ind_sorted]
-        remember_rate = 1 - self.forget_scheduler[epoch]
-        num_remember = int(remember_rate * len(loss_sorted))
-        ind_update = ind_sorted[:num_remember]
-        loss = torch.mean(loss[ind_update])
-        return loss
-
-# CKA: Similarity of Neural Network Representations Revisited
+# CKA Metric ("Similarity of Neural Network Representations Revisited")
 def gram_linear(x):
   """Compute Gram (kernel) matrix for a linear kernel.
 

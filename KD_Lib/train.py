@@ -1,11 +1,13 @@
 import os, pprint
 import torch
+import loralib
 from KD_Lib.models import model_dict
 from KD_Lib.models.resnet_torch import get_ResNet, monkey_patch
 from KD_Lib.models.shake import ShakeHead
 from KD_Lib.KD import VanillaKD, DML, Shake, Smooth, FNKD, TriKD
 from KD_Lib.datasets import get_dataset, get_cifar100_dataloaders
-from KD_Lib.utils import get_optim_sched, log_cfg, SharpLoss
+from KD_Lib.KD.common.loss import KLDivLoss, SharpLoss
+from KD_Lib.utils import get_optim_sched, log_cfg
 
 def train(cfg, logger=None, trial=None):
     logger.save_log(pprint.pformat(cfg.__dict__))
@@ -32,7 +34,7 @@ def train(cfg, logger=None, trial=None):
 
     # Losses()
     losses = [torch.nn.CrossEntropyLoss(reduction='mean').to(cfg.DEVICE),
-              torch.nn.KLDivLoss(reduction='batchmean', log_target=True).to(cfg.DEVICE)] 
+              KLDivLoss(cfg, reduction='batchmean').to(cfg.DEVICE)]
 
     # Training
     if cfg.MODE == 'kd': # Vanilla KD
@@ -40,7 +42,7 @@ def train(cfg, logger=None, trial=None):
         distiller.train_student()
         distiller.evaluate(teacher=False, verbose=True) # Evaluate the student network
 
-    if cfg.MODE == 'fnkd': # Vanilla KD
+    elif cfg.MODE == 'fnkd': # Vanilla KD
         distiller = FNKD(models, loaders, optimizers, schedulers, losses, cfg)
         distiller.train_student()
         distiller.evaluate(teacher=False, verbose=True) # Evaluate the student network
@@ -77,7 +79,10 @@ def train(cfg, logger=None, trial=None):
         distiller.evaluate(verbose=True)
 
     elif cfg.MODE == 'smooth': # New method
-        smooth = torch.nn.Linear(64, cfg.CLASSES).to(cfg.DEVICE)
+        if cfg.LORA:
+            smooth = loralib.Linear(64, cfg.CLASSES, r=16).to(cfg.DEVICE)
+        else:
+            smooth = torch.nn.Linear(64, cfg.CLASSES).to(cfg.DEVICE)
         models.insert(1, smooth)
 
         optim_sched = get_optim_sched(models[1:], cfg, single=True)
@@ -90,7 +95,7 @@ def train(cfg, logger=None, trial=None):
             distiller.train_teacher()
         else:
             distiller.models[0].load_state_dict(torch.load(cfg.TEACHER_WEIGHTS))
-        if cfg.PRETRAINED_HEAD:
+        if cfg.PRETRAINED_HEAD and not cfg.LORA:
             distiller.models[1].weight.data = list(distiller.models[0].modules())[-1].weight.data.clone()
             distiller.models[1].bias.data = list(distiller.models[0].modules())[-1].bias.data.clone()
 

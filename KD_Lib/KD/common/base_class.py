@@ -7,20 +7,8 @@ from torch.utils.tensorboard import SummaryWriter
 from KD_Lib.utils import sharpness, sharpness_gap, AverageMeter, log_cfg
 
 class BaseClass:
-    """
-    Basic implementation of a general Knowledge Distillation framework
-    """
-
-    def __init__(
-        self,
-        models,
-        loaders,
-        optimizers,
-        schedulers,
-        losses,
-        cfg
-    ):
-        
+    """ Basic implementation of a general Knowledge Distillation framework """
+    def __init__(self, models, loaders, optimizers, schedulers, losses, cfg):
         self.train_loader, self.val_loader = loaders
         self.teacher_model, self.student_model = models
         self.optimizer_teacher, self.optimizer_student = optimizers
@@ -136,10 +124,9 @@ class BaseClass:
                     teacher_out = self.teacher_model(data, norm_feats=self.cfg.FEAT_NORM)
                 student_out = self.student_model(data, norm_feats=self.cfg.FEAT_NORM)
                 loss, ce_loss, kd_loss = self.calculate_kd_loss(student_out, teacher_out, label)
+                loss.backward()
+                self.optimizer_student.step()
 
-                if isinstance(teacher_out, tuple):
-                    teacher_out = teacher_out[0]
-                    student_out = student_out[0]
                 g_sharp, t_sharp, s_sharp = sharpness_gap(teacher_out, student_out)
                 g_sharp_train.update(g_sharp)
                 t_sharp_train.update(t_sharp)
@@ -147,9 +134,6 @@ class BaseClass:
                 kld = F.kl_div(F.log_softmax(student_out.detach(), dim=1), F.log_softmax(teacher_out.detach(), dim=1),
                                log_target=True, reduction='batchmean')
                 epoch_kld.update(kld)
-
-                loss.backward()
-                self.optimizer_student.step()
 
                 pred = student_out.argmax(dim=1, keepdim=True)
                 correct += pred.eq(label.view_as(pred)).sum().item()
@@ -224,7 +208,8 @@ class BaseClass:
         correct = 0
         outputs = []
         sharp = AverageMeter()
-
+        model.eval()
+        
         with torch.no_grad():
             for data, target in self.val_loader:
                 data = data.to(self.device)

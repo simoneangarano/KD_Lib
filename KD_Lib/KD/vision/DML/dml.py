@@ -146,7 +146,8 @@ class DML:
         correct = 0
         outputs = []
         sharp = AverageMeter()
-
+        model.eval()
+        
         with torch.no_grad():
             for data, target in self.val_loader:
                 data = data.to(self.device)
