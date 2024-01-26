@@ -1,9 +1,12 @@
-import time
+import time, tempfile, os
 from copy import deepcopy
 
-import optuna
 import torch
 import torch.nn.functional as F
+
+import optuna
+from ray import tune, train
+
 from KD_Lib.KD.common.loss import SmoothLoss
 from KD_Lib.utils import AverageMeter, sharpness, sharpness_gap, log_cfg
 from KD_Lib.KD.vision.DML.shake import Shake
@@ -121,13 +124,19 @@ class Smooth(Shake):
             out += f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}"
             out += f"\n[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}"
             self.logger.save_log(out)
-            self.logger.save_log("-" * 100)
+            self.logger.save_log("-" * 60)
             self.schedulers[-1].step()
 
             if self.trial is not None:
                 self.trial.report(val_accs[-1], ep)
                 if self.trial.should_prune():
                     raise optuna.TrialPruned()
+                
+                with tempfile.TemporaryDirectory() as temp_checkpoint_dir:
+                    path = os.path.join(temp_checkpoint_dir, "checkpoint.pt")
+                    torch.save((self.models[-1].state_dict(), self.optimizers[-1].state_dict()), path)
+                    checkpoint = train.Checkpoint.from_directory(temp_checkpoint_dir)
+                    tune.report({"accuracy": val_accs[-1]}, checkpoint=checkpoint)
 
         self.cfg.TIME = (time.time() - self.cfg.TIME) / 60.0
         self.best_student.load_state_dict(self.best_student_model_weights)

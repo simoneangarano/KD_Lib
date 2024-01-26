@@ -1,4 +1,4 @@
-import os, json, pprint, typing
+import os, json, pprint, typing, random
 import numpy as np
 import optuna
 import torch
@@ -54,6 +54,7 @@ class Logger(object):
     def __init__(self, file):
         self.file = file
         self.pp = pprint.PrettyPrinter(depth=2)
+        self.save_log(f"Logging to {file}.")
         
     def save_log(self, text):
         if type(text) is dict:
@@ -80,8 +81,19 @@ class MultiPruner(optuna.pruners.BasePruner):
 def log_cfg(cfg):
     if not os.path.exists(cfg.LOG_DIR):
         os.makedirs(cfg.LOG_DIR)
-    with open(f"{cfg.LOG_DIR}{cfg.EXP}.json", "w") as file:
+    with open(os.path.join(cfg.LOG_DIR, f"{cfg.EXP}.json"), "w") as file:
         json.dump(cfg.__dict__, file)
+
+def set_environment(seed, device):
+    if int(device) >= 0:
+        os.environ['CUDA_VISIBLE_DEVICES'] = device
+    if seed >= 0:
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 # Sharpness Metric

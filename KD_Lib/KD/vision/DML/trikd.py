@@ -17,7 +17,7 @@ class TriKD(Shake):
         self.best_student_model_weights = deepcopy(self.models[-1].state_dict())
         self.best_student = self.models[-1]
 
-        print("Training Teacher and Student...")
+        self.logger.save_log("Training Teacher and Student...")
         self.cfg.TIME = time.time()
         for ep in range(self.cfg.EPOCHS):
             if ep == 150:
@@ -118,10 +118,10 @@ class TriKD(Shake):
                 self.writer.add_scalar("Sharpness Gap Val", g_sharp_val, ep)
                 log_cfg(self.cfg)
 
-            print(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[-1].get_last_lr()[0]:.1e},",
+            self.logger.save_log(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[-1].get_last_lr()[0]:.1e},",
                   f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}",
                   f"\n[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
-            print("-" * 100)
+            self.logger.save_log("-" * 60)
             self.schedulers[-1].step()
 
         self.cfg.TIME = (time.time() - self.cfg.TIME) / 60.0
@@ -146,7 +146,7 @@ class TriKD(Shake):
         val_accs = [val_acc_t, val_acc_s]
         val_sharps = [sharp_t, sharp_s]
         if verbose:
-            print(f"Teacher Accuracy: {val_accs[0]:.4f}, Student Accuracy: {val_accs[1]:.4f}")
+            self.logger.save_log(f"Teacher Accuracy: {val_accs[0]:.4f}, Student Accuracy: {val_accs[1]:.4f}")
         return val_accs, val_sharps[0], val_sharps[-1], val_sharps[0] - val_sharps[-1]
     
     def _evaluate_model(self, model):

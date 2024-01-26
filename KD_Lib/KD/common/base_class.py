@@ -40,7 +40,7 @@ class BaseClass:
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
 
-        print("Training Teacher... ")
+        self.logger.save_log("Training Teacher... ")
 
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
@@ -80,9 +80,9 @@ class BaseClass:
                 self.writer.add_scalar("Sharpness Teacher Val", val_sharp, ep)
                 log_cfg(self.cfg)
 
-            print(f"[{ep+1}: {(time.time() - t0)/60.0:.1f}m] LR: {self.scheduler_teacher.get_last_lr()[0]:.1e}, Loss: {(epoch_loss.avg):.4f},", 
+            self.logger.save_log(f"[{ep+1}: {(time.time() - t0)/60.0:.1f}m] LR: {self.scheduler_teacher.get_last_lr()[0]:.1e}, Loss: {(epoch_loss.avg):.4f},", 
                   f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
-            print("-" * 100)
+            self.logger.save_log("-" * 60)
 
             self.scheduler_teacher.step()
 
@@ -104,7 +104,7 @@ class BaseClass:
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
 
-        print("Training Student...")
+        self.logger.save_log("Training Student...")
         self.cfg.TIME = time.time()
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
@@ -167,11 +167,11 @@ class BaseClass:
                 self.writer.add_scalar("KL Divergence", epoch_kld.avg, ep)
                 log_cfg(self.cfg)
 
-            print(
+            self.logger.save_log(
                 f"[{ep+1}: {(time.time() - t0)/60.0:.1f}m] LR: {self.scheduler_student.get_last_lr()[0]:.1e},",
                 f"Loss: {(epoch_loss.avg):.4f}, CE: {(epoch_ce_loss.avg):.4f}, KD: {(epoch_kd_loss.avg):.4f},", 
                 f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
-            print("-" * 100)
+            self.logger.save_log("-" * 60)
             self.scheduler_student.step()
 
         self.cfg.TIME = (time.time() - self.cfg.TIME) / 60.0
@@ -190,7 +190,7 @@ class BaseClass:
             self.teacher_model.load_state_dict(torch.load(self.cfg.TEACHER_WEIGHTS))
         self.cfg.VACC['T_BEST'], _ = self.evaluate(teacher=True)
         self.cfg.VACC['T_LAST'] = self.cfg.VACC['T_BEST']
-        print(f"Teacher Accuracy: {self.cfg.VACC['T_BEST']:.4f}%")
+        self.logger.save_log(f"Teacher Accuracy: {self.cfg.VACC['T_BEST']:.4f}%")
         self._train_student(save_model=save_model)
 
     def calculate_kd_loss(self, y_pred_student, y_pred_teacher, y_true):
@@ -234,7 +234,7 @@ class BaseClass:
             model = deepcopy(self.student_model).eval().to(self.device)
         _, accuracy, sharp = self._evaluate_model(model)
         if verbose:
-            print(f"Accuracy: {accuracy:.4f}")
+            self.logger.save_log(f"Accuracy: {accuracy:.4f}")
         return accuracy, sharp
     
     def set_models(self, mode='eval'):

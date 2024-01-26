@@ -1,20 +1,13 @@
 from __future__ import print_function
 
 import os
-import socket
-import numpy as np
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-from PIL import Image
-
-import os
 import pandas as pd
+
 import torch
-from torchvision import datasets
+from torch.utils.data import Dataset, DataLoader
+from torchvision import datasets, transforms
 from torchvision.datasets.folder import default_loader
 from torchvision.datasets.utils import download_url
-from torchvision import transforms
-from torch.utils.data import Dataset
 
 def get_dataset(cfg):
     # Dataset

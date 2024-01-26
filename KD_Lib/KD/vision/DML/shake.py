@@ -29,7 +29,7 @@ class Shake(DML):
         self.best_student_model_weights = deepcopy(self.models[-1].state_dict())
         self.best_student = self.models[-1]
 
-        print("Training Teacher and Student...")
+        self.logger.save_log("Training Teacher and Student...")
         self.cfg.TIME = time.time() 
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
@@ -66,7 +66,7 @@ class Shake(DML):
                 C = self.loss_ce(pred_feat_s, label)
                 D = F.mse_loss(pred_feat_s, logit_t.detach())
                 loss_kd += C + D
-                # print(f"A {A:.4f}, B {B:.4f}, C {C:.4f}, D {D:.4f}")
+                # self.logger.save_log(f"A {A:.4f}, B {B:.4f}, C {C:.4f}, D {D:.4f}")
                 loss = loss_cls + self.cfg.W * loss_kd
                 loss.backward()
                 self.optimizers[-1].step()
@@ -116,10 +116,10 @@ class Shake(DML):
                 self.writer.add_scalar("KL Divergence", epoch_kld.avg, ep)
                 log_cfg(self.cfg)
 
-            print(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[-1].get_last_lr()[0]:.1e},",
+            self.logger.save_log(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[-1].get_last_lr()[0]:.1e},",
                   f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}",
                   f"\n[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
-            print("-" * 100)
+            self.logger.save_log("-" * 60)
             self.schedulers[-1].step()
 
         self.cfg.TIME = (time.time() - self.cfg.TIME) / 60.0
@@ -172,7 +172,7 @@ class Shake(DML):
         val_accs = [val_acc_t, val_acc_s]
         val_sharps = [sharp_t, sharp_s]
         if verbose:
-            print(f"Teacher Accuracy: {val_accs[0]:.4f}, Student Accuracy: {val_accs[1]:.4f}")
+            self.logger.save_log(f"Teacher Accuracy: {val_accs[0]:.4f}, Student Accuracy: {val_accs[1]:.4f}")
         return val_accs, val_sharps[0], val_sharps[-1], val_sharps[0] - val_sharps[-1]
     
     def train_teacher(self, save_model=True):
@@ -187,7 +187,7 @@ class Shake(DML):
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
 
-        print("Training Teacher... ")
+        self.logger.save_log("Training Teacher... ")
 
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
@@ -228,9 +228,9 @@ class Shake(DML):
                 self.writer.add_scalar("Sharpness Teacher Val", val_sharp, ep)
                 log_cfg(self.cfg)
 
-            print(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e}, Loss: {(epoch_loss.avg):.4f},", 
+            self.logger.save_log(f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e}, Loss: {(epoch_loss.avg):.4f},", 
                   f"Acc: {epoch_acc:.4f}, ValAcc: {epoch_val_acc:.4f}")
-            print("-" * 100)
+            self.logger.save_log("-" * 60)
 
             self.schedulers[0].step()
 

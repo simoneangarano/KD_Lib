@@ -43,7 +43,7 @@ class DML:
         self.best_student_model_weights = deepcopy(self.models[-1].state_dict())
         self.best_student = self.models[-1]
 
-        print("Training Teacher and Student...")
+        self.logger.save_log("Training Teacher and Student...")
         self.cfg.TIME = time.time()
         for ep in range(self.cfg.EPOCHS):
             t0 = time.time()
@@ -125,10 +125,10 @@ class DML:
                 self.writer.add_scalar("KL Divergence", epoch_kld.avg, ep)
                 log_cfg(self.cfg)
 
-            print(f"[{ep+1}: {(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
+            self.logger.save_log(f"[{ep+1}: {(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[0].get_last_lr()[0]:.1e},",
                   f"Loss: {(epoch_loss.avg):.4f}, CE: {epoch_ce_loss.avg:.4f}, KD: {epoch_kd_loss.avg:.4f}",
                   f"\n[T] Acc: {t_epoch_acc:.4f}, ValAcc: {val_accs[0]:.4f}, [S] Acc: {s_epoch_acc:.4f}, ValAcc: {val_accs[-1]:.4f}")
-            print("-" * 100)
+            self.logger.save_log("-" * 60)
             for sched in self.schedulers:
                 sched.step()
                 
@@ -174,7 +174,7 @@ class DML:
             val_accs.append(val_acc_i)
             val_sharps.append(sharp)
         if verbose:
-            print(f"Teacher Accuracy: {val_accs[0]:.4f}, Student Accuracy: {val_accs[1]:.4f}")
+            self.logger.save_log(f"Teacher Accuracy: {val_accs[0]:.4f}, Student Accuracy: {val_accs[1]:.4f}")
         return val_accs, val_sharps[0], val_sharps[-1], val_sharps[0] - val_sharps[-1]
     
     def set_models(self, mode='eval'):
