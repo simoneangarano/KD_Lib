@@ -54,23 +54,18 @@ class TriKD(Shake):
                 # classification loss student
                 loss_cls = self.loss_ce(logit_s, label)
                 # distillation loss student <-> smooth head
-                A = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(pred_feat_s/self.cfg.T, dim=1), 
-                                                           F.log_softmax(logit_s.detach()/self.cfg.T, dim=1))
-                B = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
-                                                           F.log_softmax(pred_feat_s.detach()/self.cfg.T, dim=1))
+                A = self.loss_kd(pred_feat_s, logit_s)
+                B = self.loss_kd(logit_s, pred_feat_s)
                 # classification loss smooth head
                 # C = self.loss_ce(pred_feat_s, label)
                 # distillation loss smooth head <-> teacher
                 # D = F.mse_loss(pred_feat_s, logit_t.detach())
                 # distillation loss student <-> frozen teacher
-                # E = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
-                #                                            F.log_softmax(logit_t.detach()/self.cfg.T, dim=1))
+                # E = self.loss_kd(logit_s, logit_t)
                 # distillation loss smooth teacher <-> anchor
-                G = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(pred_feat_s/self.cfg.T, dim=1), 
-                                                           F.log_softmax(logit_a/self.cfg.T, dim=1))
+                G = self.loss_kd(pred_feat_s, logit_a)
                 # distillation loss student <-> anchor
-                H = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
-                                                           F.log_softmax(logit_a/self.cfg.T, dim=1))
+                H = self.loss_kd(logit_s, logit_a)
                                                            
                 loss_kd = A + B + G + H # + D + E + C
                 loss = loss_cls + self.cfg.W * loss_kd

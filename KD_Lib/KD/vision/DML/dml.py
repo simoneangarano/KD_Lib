@@ -70,10 +70,8 @@ class DML:
                         with torch.no_grad():
                             out_j = self.models[j](data, norm_feats=self.cfg.FEAT_NORM)
                         if stud_teach_kd or i == 1: # Student-Teacher KD skipped if stud_teach_kd is False
-                            loss_kd = self.cfg.W * self.cfg.T * self.cfg.T * self.loss_kd(
-                                F.log_softmax(out_i / self.cfg.T, dim=1), 
-                                F.log_softmax(out_j.detach() / self.cfg.T, dim=1))
-                            student_loss += loss_kd
+                            loss_kd = self.loss_kd(out_i, out_j)
+                            student_loss += self.cfg.W*loss_kd
                     student_loss /= num_students - 1
                     loss_ce = self.loss_ce(out_i, label)
                     student_loss += loss_ce
@@ -83,8 +81,7 @@ class DML:
                 g_sharp, t_sharp, s_sharp = sharpness_gap(out_j, out_i) # j is teacher, i is student
                 s_sharp_train.update(s_sharp), t_sharp_train.update(t_sharp), g_sharp_train.update(g_sharp)
                 epoch_loss.update(student_loss.item()), epoch_ce_loss.update(loss_ce.item()), epoch_kd_loss.update(loss_kd.item())
-                kld = F.kl_div(F.log_softmax(out_i.detach(), dim=1), F.log_softmax(out_j.detach(), dim=1),
-                               log_target=True, reduction='batchmean')
+                kld = F.kl_div(F.log_softmax(out_i.detach(), dim=1), F.softmax(out_j.detach(), dim=1), reduction='batchmean')
                 epoch_kld.update(kld)
 
                 predictions = []

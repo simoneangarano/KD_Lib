@@ -21,7 +21,7 @@ class Cfg:
         self.DATASET: str = 'cifar100' # 'cifar10' or 'cifar100'
         self.T: float = 1.0 if self.MODE in ['trikd'] else 4.0
         self.W: float = 0.9 if self.MODE == 'kd' else 9.0 if self.MODE in ['fnkd'] else 1.0
-        self.L = [1, 1, 2, 0.1, 0.3, 0] # La, Lb, Lc, Ld, Le, Lf
+        self.L = [1, 1, 0.1, 0.03, 0.03, 0] # La, Lb, Lc, Ld, Le, Lf
         # Jocor Loss
         self.JOCOR: bool = False
         self.GRADUAL: int = 180
@@ -46,7 +46,7 @@ class Cfg:
         self.LR_MIN: float = 5e-5
         self.MOMENTUM: float = 0.9
         self.WD: float = 5e-4
-        self.EPOCHS: int = 2
+        self.EPOCHS: int = 240
         self.SCHEDULER: str = 'step' # 'cos' or 'step' or 'lin'
         self.STEPS: list = [150, 180, 210]
         self.GAMMA: float = 0.1

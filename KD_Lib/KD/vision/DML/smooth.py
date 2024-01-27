@@ -79,8 +79,7 @@ class Smooth(Shake):
 
                 g_sharp, t_sharp, s_sharp = sharpness_gap(pred_feat_s, logit_s_orig)
                 s_sharp_train.update(s_sharp), t_sharp_train.update(t_sharp), g_sharp_train.update(g_sharp)
-                kld = F.kl_div(F.log_softmax(logit_s.detach(), dim=1), F.log_softmax(pred_feat_s.detach(), dim=1),
-                               log_target=True, reduction='batchmean')
+                kld = F.kl_div(F.log_softmax(logit_s.detach(), dim=1), F.softmax(pred_feat_s.detach(), dim=1), reduction='batchmean')
                 epoch_kld.update(kld)
                 predictions = []
                 correct_preds = []
@@ -118,6 +117,7 @@ class Smooth(Shake):
                 self.writer.add_scalar("Sharpness Gap Train", g_sharp_train.avg, ep)
                 self.writer.add_scalar("Sharpness Gap Val", g_sharp_val, ep)
                 self.writer.add_scalar("KL Divergence", epoch_kld.avg, ep)
+                # self.writer.add_scalar("KL Divergence Val", val_kld, ep)
                 log_cfg(self.cfg)
 
             out = f"[{ep+1}: {float(time.time() - t0)/60.0:.1f}m] LR: {self.schedulers[-1].get_last_lr()[0]:.1e}, "
@@ -151,7 +151,7 @@ class Smooth(Shake):
             length_of_dataset = len(self.val_loader.dataset)
             correct = 0
             outputs = []
-            sharp = AverageMeter()
+            sharp, val_kld = AverageMeter(), AverageMeter()
 
             with torch.no_grad():
                 for data, target in self.val_loader:
@@ -166,6 +166,8 @@ class Smooth(Shake):
                     output = self.norm(output)
                     outputs.append(output)
                     sharp.update(sharpness(output))
+                    # kld = F.kl_div(F.log_softmax(logit_s.detach(), dim=1), F.softmax(pred_feat_s.detach(), dim=1), reduction='batchmean')
+                    # val_kld.update(kld)
 
                     pred = output.argmax(dim=1, keepdim=True)
                     correct += pred.eq(target.view_as(pred)).sum().item()

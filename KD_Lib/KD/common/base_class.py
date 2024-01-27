@@ -131,8 +131,7 @@ class BaseClass:
                 g_sharp_train.update(g_sharp)
                 t_sharp_train.update(t_sharp)
                 s_sharp_train.update(s_sharp)
-                kld = F.kl_div(F.log_softmax(student_out.detach(), dim=1), F.log_softmax(teacher_out.detach(), dim=1),
-                               log_target=True, reduction='batchmean')
+                kld = F.kl_div(F.log_softmax(student_out.detach(), dim=1), F.softmax(teacher_out.detach(), dim=1), reduction='batchmean')
                 epoch_kld.update(kld)
 
                 pred = student_out.argmax(dim=1, keepdim=True)

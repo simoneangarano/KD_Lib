@@ -107,7 +107,7 @@ def sharpness_torch(logits):
     return logits
 
 def kl_loss_compute(pred, soft_targets, reduction='none'):
-    kl = F.kl_div(F.log_softmax(pred, dim=1),F.softmax(soft_targets, dim=1),reduction='none')
+    kl = F.kl_div(F.log_softmax(pred, dim=1), F.softmax(soft_targets, dim=1),reduction='none')
     if reduction:
         return torch.mean(torch.sum(kl, dim=1))
     else:

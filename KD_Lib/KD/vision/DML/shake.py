@@ -58,10 +58,8 @@ class Shake(DML):
                 # cls + kl div
                 loss_cls = self.loss_ce(logit_s, label)
                 # loss_div = self.loss_kd(logit_s, logit_t)
-                A = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(pred_feat_s/self.cfg.T, dim=1), 
-                                                           F.log_softmax(logit_s.detach()/self.cfg.T, dim=1))
-                B = self.cfg.T * self.cfg.T * self.loss_kd(F.log_softmax(logit_s/self.cfg.T, dim=1), 
-                                                           F.log_softmax(pred_feat_s.detach()/self.cfg.T, dim=1))
+                A = self.loss_kd(pred_feat_s, logit_s)
+                B = self.loss_kd(logit_s, pred_feat_s)
                 loss_kd = A + B
                 C = self.loss_ce(pred_feat_s, label)
                 D = F.mse_loss(pred_feat_s, logit_t.detach())
@@ -74,8 +72,7 @@ class Shake(DML):
                 g_sharp, t_sharp, s_sharp = sharpness_gap(pred_feat_s, logit_s)
                 s_sharp_train.update(s_sharp), t_sharp_train.update(t_sharp), g_sharp_train.update(g_sharp)
                 epoch_loss.update(loss.item()), epoch_ce_loss.update(loss_cls.item()), epoch_kd_loss.update(loss_kd.item())
-                kld = F.kl_div(F.log_softmax(logit_s.detach(), dim=1), F.log_softmax(pred_feat_s.detach(), dim=1),
-                               log_target=True, reduction='batchmean')
+                kld = F.kl_div(F.log_softmax(logit_s.detach(), dim=1), F.softmax(pred_feat_s.detach(), dim=1), reduction='batchmean')
                 epoch_kld.update(kld)
 
                 predictions = []
