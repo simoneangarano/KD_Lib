@@ -2,10 +2,10 @@ from datetime import datetime
 import argparse, os
 
 import random, numpy as np
-from KD_Lib.hp_search import HPSearcher, HPTuner
+from KD_Lib.hp_search import HPTuner
 from KD_Lib.train import train
 from KD_Lib.utils import Logger, set_environment
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,2,3,4,5,6,7'
+os.environ['CUDA_VISIBLE_DEVICES'] = '2,3,4,5,6,7'
 os.environ['RAY_DEDUP_LOGS'] = '0'
 
 # Hyperparameters
@@ -17,11 +17,11 @@ class Cfg:
             return
         
         # Important
-        self.MODE: str = 'smooth' # 'kd' or 'dml' or 'shake' or 'smooth' or 'fnkd' or 'baseline' or 'ftkd' or 'trikd'
+        self.MODE: str = 'mwkd' # 'kd' or 'dml' or 'shake' or 'smooth' or 'fnkd' or 'baseline' or 'ftkd' or 'trikd'
         self.DATASET: str = 'cifar100' # 'cifar10' or 'cifar100'
         self.T: float = 1.0 if self.MODE in ['trikd'] else 4.0
         self.W: float = 0.9 if self.MODE == 'kd' else 9.0 if self.MODE in ['fnkd'] else 1.0
-        self.L = [1, 1, 0.1, 0.03, 0.03, 0] # La, Lb, Lc, Ld, Le, Lf
+        self.L = [0, 0, 0, 0, 1, 0] # La, Lb, Lc, Ld, Le, Lf
         # Jocor Loss
         self.JOCOR: bool = False
         self.GRADUAL: int = 180
@@ -35,6 +35,7 @@ class Cfg:
         # Models
         self.TEACHER: str = 'resnet110' 
         self.STUDENT: str = 'resnet20'
+        self.PRETRAINED: bool = False
         self.PRETRAINED_HEAD: bool = False
         self.LORA: bool = False
         self.CUSTOM_MODEL: bool = True
@@ -51,12 +52,12 @@ class Cfg:
         self.STEPS: list = [150, 180, 210]
         self.GAMMA: float = 0.1
         # Paths and Logging
+        self.LOG: bool = True
         self.CWD: str = os.getcwd()
         self.NAME: str = f"_{name}" if name is not None else ""
         self.EXP: str = f"{self.MODE}_{self.TEACHER}_{self.STUDENT}_{self.DATASET}{self.NAME}"
         self.TEACHER_WEIGHTS: str = os.path.abspath(f'./models/{self.TEACHER}_{self.DATASET}.pt')
         self.STUDENT_WEIGHTS: str = os.path.abspath(f'./models/{self.STUDENT}_{self.DATASET}.pt')
-        self.LOG: bool = True
         self.LOG_DIR: str = os.path.abspath(f"./exp/")
         self.TB_DIR: str = os.path.abspath(f"./tb/{self.EXP}/")
         self.SAVE_PATH: str = os.path.abspath(f"./models/{self.EXP}.pt")
@@ -64,13 +65,13 @@ class Cfg:
         # Runtime
         self.PARALLEL: bool = False
         self.DEVICE: str = 'cuda'
-        self.SEED: int = seed if seed >= 0 else random.randint(0,1000000)
+        self.SEED: int = seed if seed != 0 else random.randint(0,1000000)
         # Metrics
         self.TRIAL: int = 0
         self.TIME: float = 0.0
         self.VACC: dict = {'T_LAST': 0.0, 'T_BEST': 0.0, 'S_LAST': 0.0, 'S_BEST': 0.0}
         # HP Search
-        self.N_TRIALS: int = 2
+        self.N_TRIALS: int = 27
         self.SEARCH_SPACE: dict = {
             "La": [1],                  # KLDiv Ts->S [1]
             "Lb": [1],                  # KLDiv S->Ts [1]
@@ -102,7 +103,7 @@ def main():
         cfg = Cfg(args.cfg, args.name, args.rand_seed)
         set_environment(cfg.SEED, args.device)
         name = f'hp_search_{datetime.now().strftime("%y%m%d%H%M%S")}'
-        logger = Logger(f"{cfg.HP_SEARCH_DIR}{name}.txt")
+        logger = Logger(os.path.join(cfg.HP_SEARCH_DIR, f"{name}.txt"))
         searcher = HPTuner(cfg, name, logger)
         searcher.hp_search()
         return

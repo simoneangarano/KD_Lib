@@ -51,7 +51,7 @@ class JocorLoss(torch.nn.Module):
         ind_update = ind_sorted[:num_remember]
         loss = torch.mean(loss[ind_update])
         return loss
-    
+
 class SmoothLoss(torch.nn.Module):
     def __init__(self, cfg):
         super(SmoothLoss, self).__init__()
@@ -93,6 +93,24 @@ class SmoothLoss(torch.nn.Module):
             loss = loss[ind_update]
             loss_cls = loss_cls[ind_update]
             loss_kd = loss_kd[ind_update]
+        return torch.mean(loss), torch.mean(loss_cls), torch.mean(loss_kd)
+
+class MWKDLoss(SmoothLoss):
+    def __init__(self, cfg):
+        super(MWKDLoss, self).__init__(cfg)
+
+    def forward(self, y_s, y_t, y_ss, y, ep):
+        # classification loss student
+        loss_cls = self.loss_ce(y_s, y)
+        # distillation loss student <-> smooth head
+        La = self.loss_kd(y_ss, y_s).sum(dim=1)
+        Lb = self.loss_kd(y_s, y_ss).sum(dim=1)
+        # distillation loss student <-> teacher
+        Le = self.loss_kd(y_ss, y_t.detach()).sum(dim=1)
+
+        loss_kd = self.L[0] * La + self.L[1] * Lb + self.L[4] * Le
+        loss = loss_cls + self.W * loss_kd
+
         return torch.mean(loss), torch.mean(loss_cls), torch.mean(loss_kd)
 
 def sharpness_torch(logits):

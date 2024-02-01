@@ -4,7 +4,7 @@ import loralib
 from KD_Lib.models import model_dict
 from KD_Lib.models.resnet_torch import get_ResNet, monkey_patch
 from KD_Lib.models.shake import ShakeHead
-from KD_Lib.KD import VanillaKD, DML, Shake, Smooth, FNKD, TriKD
+from KD_Lib.KD import VanillaKD, DML, Shake, Smooth, FNKD, TriKD, MWKD
 from KD_Lib.datasets import get_dataset, get_cifar100_dataloaders
 from KD_Lib.KD.common.loss import KLDivLoss, SharpLoss
 from KD_Lib.utils import get_optim_sched, log_cfg
@@ -27,6 +27,8 @@ def train(cfg, logger=None, trial=None):
     else:
         models = [get_ResNet(model=cfg.TEACHER, cfg=cfg).to(cfg.DEVICE),
                   get_ResNet(model=cfg.STUDENT, cfg=cfg).to(cfg.DEVICE)]
+    if cfg.PRETRAINED:
+        models[1].load_state_dict(torch.load(cfg.STUDENT_WEIGHTS))
 
     # Optimizers and schedulers
     optim_sched = get_optim_sched(models, cfg)
@@ -90,6 +92,33 @@ def train(cfg, logger=None, trial=None):
         losses.append(SharpLoss())
 
         distiller = Smooth(models, loaders, optimizers, schedulers, losses, cfg, logger, trial)
+
+        if not os.path.exists(cfg.TEACHER_WEIGHTS):
+            distiller.train_teacher()
+        else:
+            distiller.models[0].load_state_dict(torch.load(cfg.TEACHER_WEIGHTS))
+        if cfg.PRETRAINED_HEAD and not cfg.LORA:
+            distiller.models[1].weight.data = list(distiller.models[0].modules())[-1].weight.data.clone()
+            distiller.models[1].bias.data = list(distiller.models[0].modules())[-1].bias.data.clone()
+
+        t_val, _ = distiller.evaluate(teacher=True)
+        logger.save_log(f"Teacher Accuracy: {t_val:.4f}%")
+
+        distiller.train_student()
+        distiller.evaluate(verbose=True)
+
+    elif cfg.MODE == 'mwkd': # New method
+        if cfg.LORA:
+            smooth = loralib.Linear(64, cfg.CLASSES, r=16).to(cfg.DEVICE)
+        else:
+            smooth = torch.nn.Linear(64, cfg.CLASSES).to(cfg.DEVICE)
+        models.insert(1, smooth)
+
+        optim_sched = get_optim_sched(models[1:], cfg, single=True)
+        optimizers[1], schedulers[1] = optim_sched['optims'], optim_sched['scheds']
+        losses.append(SharpLoss())
+
+        distiller = MWKD(models, loaders, optimizers, schedulers, losses, cfg, logger, trial)
 
         if not os.path.exists(cfg.TEACHER_WEIGHTS):
             distiller.train_teacher()

@@ -20,4 +20,5 @@ from .vision import (
     FNKD,
     VirtualTeacher,
     TriKD,
+    MWKD,
 )

@@ -54,7 +54,6 @@ class Logger(object):
     def __init__(self, file):
         self.file = file
         self.pp = pprint.PrettyPrinter(depth=2)
-        self.save_log(f"Logging to {file}.")
         
     def save_log(self, text):
         if type(text) is dict:
@@ -94,6 +93,8 @@ def set_environment(seed, device):
         random.seed(seed)
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
+    else:
+        torch.backends.cudnn.benchmark = True
 
 
 # Sharpness Metric
